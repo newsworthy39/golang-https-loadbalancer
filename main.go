@@ -16,26 +16,47 @@ import (
 	"time"
 )
 
+type Object interface {
+	UUID() int64
+}
+
+func (r *Statistics) UUID() int64 {
+	return r.Stuff
+}
+
+type Node struct {
+	Route //embedded struct
+	next, prev *Node
+}
+
+type List struct {
+	head, tail *Node
+}
+
+func (l* List) First() *Node {
+	return l.head
+}
+
+func (n* Node) Next() *Node {
+	return n.next
+}
+func (n* Node) Prev() *Node {
+	return n.prev
+}
 
 type Statistics struct {
 	// This follows statistics, pr.
-	Requests   int64
-	NoRoutes   int64
-	NoBackends int64
-	StartTime  int64
-	EndTime    int64
+	StatusCodes []int64
+	NoBackends  int64
+	StartTime   int64
+	EndTime     int64
+
 }
 
-type Application struct {
-	Next        *Application
-	Prev        *Application
-	End         *Application
-	Application string
+type Route struct {
 	Targets     []string
 	Healthcheck string
-	Routes      []*regexp.Regexp
-	Root       bool
-	Order       int
+	Route      *regexp.Regexp
 
 	// Stats
 	Stats Statistics
@@ -542,7 +563,8 @@ func main() {
 	rand.Seed(time.Now().Unix()) // initialize global pseudo random generator
 
 	// We set, this to -1, thus default is 0.
-	hello := Application{Application: "root", Root: true, Order: 999999, Strategy: 0}
+	apps := new(List)
+	apps.Push(Application{Application: "root", Root: true, Order: 999999, Strategy: 0})
 
 	go hello.subscribe()
 
