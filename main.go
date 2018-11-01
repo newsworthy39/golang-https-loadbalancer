@@ -16,6 +16,7 @@ import (
 	"time"
 )
 
+
 type Statistics struct {
 	// This follows statistics, pr.
 	Requests   int64
@@ -40,7 +41,7 @@ type Application struct {
 	Stats Statistics
 
 	// Strategy
-	Strategy string
+	Strategy int
 }
 
 type ApplicationRequest struct {
@@ -51,7 +52,7 @@ type ApplicationRequest struct {
 	Order       int
 
 	// Strategy
-	Strategy string
+	Strategy int
 
 }
 
@@ -199,7 +200,7 @@ func (p *Application) IsEnd() bool {
 }
 
 func (p *Application) IsEmpty() bool {
-	return p.IsRoot() && p.IsEnd()
+	return p.Root && p.Next == nil
 }
 
 func (p *Application) check() {
@@ -229,30 +230,46 @@ func RoundRobinStrategy(application *Application) int {
 }
 
 func SelectStrategy(application *Application) int {
-	m := map[string]func(application *Application) int {
-		"RoundRobinStrategy": RoundRobinStrategy,
-		"RandomStrategy"    : RandomStrategy,
+	m := map[int]func(application *Application) int {
+		0: RoundRobinStrategy,
+		1: RandomStrategy,
 	}
 
-	if len(application.Strategy) > 0 {
-		return m[application.Strategy](application)
-	} else {
-		return m["RoundRobinStrategy"](application)
-	}
+	return m[application.Strategy](application)
 }
-
 
 func (p *Application) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	if p.IsEmpty() {
-
+			res.WriteHeader(http.StatusNotFound)
+			res.Write([]byte(fmt.Sprintf("This loadbalancer hos not yet been configured (%s!).", req.URL.Path[1:])))
 		// Error to flush the io-streams
-		http.Error(res,
-			fmt.Sprintf("This loadbalancer has not yet been configured."),
-			http.StatusInternalServerError)
+		// http.Error(res,
+		//	fmt.Sprintf("This loadbalancer has not yet been configured."),
+		//	http.StatusInternalServerError)
 		return
 	}
 
-	if p.MatchRequestAgainstRoutes(req) && len(p.Targets) >= 1 {
+	if p.MatchRequestAgainstRoutes(req) {
+
+		// If there is not available targets, then send error.
+		if len(p.Targets) < 1  {
+			// Allways, log in root-application.
+			root := p.GetFirst()
+
+			if root.HasApplication("root") {
+				t := root.GetApplication("root")
+
+				// Accouting, only happens in root application
+				t.Stats.NoBackends++
+			}
+
+			// Error to flush the io-streams
+			http.Error(res,
+				fmt.Sprintf("This path has no available backends."),
+				http.StatusInternalServerError)
+			return
+
+		}
 
 		// Accouting.
 		p.Stats.Requests++
@@ -261,8 +278,6 @@ func (p *Application) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 		peer := p.Targets[SelectStrategy(p)]
 
 		target, _ := url.Parse(peer)
-
-		// logRequestPayload(requestPayload, url)
 
 		// create the reverse proxy
 		proxy := httputil.NewSingleHostReverseProxy(target)
@@ -277,6 +292,7 @@ func (p *Application) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 		proxy.ServeHTTP(res, req)
 
 	} else {
+
 		if p.IsEnd() == false {
 			p.Next.ServeHTTP(res, req)
 		} else {
@@ -291,10 +307,13 @@ func (p *Application) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 				t.Stats.NoRoutes++
 			}
 
+			res.Write([]byte(fmt.Sprintf("This path has not received any configuration (%s!).", req.URL.Path[1:])))
+			res.WriteHeader(http.StatusInternalServerError)
+
 			// Error to flush the io-streams
-			http.Error(res,
-				fmt.Sprintf("This path has not received any configuration."),
-				http.StatusInternalServerError)
+			// http.Error(res,
+			//	fmt.Sprintf("This path has not received any configuration."),
+			//	http.StatusInternalServerError)
 			return
 
 		}
@@ -523,7 +542,7 @@ func main() {
 	rand.Seed(time.Now().Unix()) // initialize global pseudo random generator
 
 	// We set, this to -1, thus default is 0.
-	hello := Application{Application: "root", Root: true, Order: 999999, Strategy: "RoundRobinStrategy"}
+	hello := Application{Application: "root", Root: true, Order: 999999, Strategy: 0}
 
 	go hello.subscribe()
 
