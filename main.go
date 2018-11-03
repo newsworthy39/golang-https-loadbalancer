@@ -15,29 +15,63 @@ import (
 	uuid "github.com/google/uuid"
 )
 
+type stResponseWriter struct {
+	http.ResponseWriter
+	HTTPStatus   int
+	ResponseSize int
+}
+
+func (w *stResponseWriter) WriteHeader(status int) {
+	w.HTTPStatus = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *stResponseWriter) Flush() {
+	z := w.ResponseWriter
+	if f, ok := z.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (w *stResponseWriter) CloseNotify() <-chan bool {
+	z := w.ResponseWriter
+	return z.(http.CloseNotifier).CloseNotify()
+}
+
+func (w *stResponseWriter) Write(b []byte) (int, error) {
+	if w.HTTPStatus == 0 {
+		w.HTTPStatus = 200
+	}
+	w.ResponseSize = len(b)
+	return w.ResponseWriter.Write(b)
+}
+
 type Target interface {
 	ServeHTTP( res http.ResponseWriter, req *http.Request) bool
 }
 
 type ProxyTargetRule struct {
 	Target string
-	transport *http.Transport
+	transport [64]*http.Transport
+	MaxBackendConnections int
+	activeBackendConnections int
 }
 
 type CacheTargetRule struct {
 	Content string
+	Headers []string
 	StatusCode int
 }
 
 func (p* ProxyTargetRule) ServeHTTP( res http.ResponseWriter, req *http.Request) bool {
-	if p.transport == nil {
-		p.transport = &http.Transport{
+	if p.transport[p.activeBackendConnections] == nil {
+		p.transport[p.activeBackendConnections] = &http.Transport{
 			MaxIdleConns:       10,
 			IdleConnTimeout:    30 * time.Second,
 			DisableCompression: true }
 	}
 
-	client := &http.Client{Transport: p.transport }
+	client := &http.Client{Transport: p.transport[p.activeBackendConnections] }
 	resp, err := client.Get(p.Target)
 
 	if err != nil {
@@ -48,11 +82,21 @@ func (p* ProxyTargetRule) ServeHTTP( res http.ResponseWriter, req *http.Request)
 	res.WriteHeader(resp.StatusCode)
 	res.Write([]byte(body))
 
+	p.activeBackendConnections++
+
+	if p.activeBackendConnections%p.MaxBackendConnections == 0 {
+		p.activeBackendConnections = 0
+	}
+
 	return true
 }
 
 
 func (p* CacheTargetRule) ServeHTTP( res http.ResponseWriter, req *http.Request) bool {
+	for _, element := range p.Headers {
+		s := strings.SplitN(element,":", 2)
+		res.Header().Add(s[0], s[1])
+	}
 	res.WriteHeader(p.StatusCode)
 	res.Write([]byte(p.Content))
 
@@ -187,6 +231,37 @@ func (l* List) FindTargetGroupByRouteExpression(req *http.Request) (RouteExpress
 	return RouteExpression{}, errors.New("FindTargetGRoupByRouteExpression: No routes found")
 }
 
+func NCSALogger(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+
+		t := time.Now()
+		interceptWriter := stResponseWriter{w, 0, 0}
+
+		next.ServeHTTP(&interceptWriter, r)
+
+		log.Printf("%s - %s - - %s \"%s %s %s\" %d %d %s %dus\n",
+			r.URL.Scheme,
+			r.RemoteAddr,
+			t.Format("02/Jan/2006:15:04:05 -0700"),
+			r.Method,
+			r.URL.Path,
+			r.Proto,
+			interceptWriter.HTTPStatus,
+			interceptWriter.ResponseSize,
+			r.UserAgent(),
+			time.Since(t),
+		)
+	}
+}
+
+func EnsureHTTPProtocolHeaders(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Make sure, we have a protocol, matching our listener proto.
+		r.URL.Scheme = "http"
+
+		next.ServeHTTP(w, r)
+	}
+}
 
 func main() {
 
@@ -194,12 +269,14 @@ func main() {
 	routeexpressions := new(List)
 
 	route := NewRouteExpression("/", fmt.Sprintf("http://192.168.1.11:%s", getEnv("PORT", "9999")))
-//	route.AddTargetRule(&CacheTargetRule{ Content: "Cached https://www.tuxand.me", StatusCode: 200})
-	route.AddTargetRule(&ProxyTargetRule{ Target: "https://www.tuxand.me"})
+	route.AddTargetRule(&CacheTargetRule{ Content: "Location moved", StatusCode: 301, Headers: []string { "Location: https://www.dr.dk"} } )
+	route.AddTargetRule(&ProxyTargetRule{ Target: "https://www.tuxand.me", MaxBackendConnections: 4})
 	routeexpressions.Insert (*route)
 
 	// Start webserver, capture apps and use that.
-	http.HandleFunc("/", func( res http.ResponseWriter, req *http.Request) {
+	http.HandleFunc("/", EnsureHTTPProtocolHeaders(
+				NCSALogger(
+					func( res http.ResponseWriter, req *http.Request) {
 
 		// Make sure, we have a protocol, matching our listener proto.
 		req.URL.Scheme = "http"
@@ -228,7 +305,7 @@ func main() {
 		routeExpression.ServeHTTP(res, req)
 
 		return
-	})
+	})))
 
 	err := http.ListenAndServe(fmt.Sprintf(":%s", getEnv("PORT", "9999")), nil)
 	log.Fatal(err)
