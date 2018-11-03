@@ -46,7 +46,7 @@ func TestCacheRulesFindTargetGroupByRouteExpression(t *testing.T) {
 
 	routeexpressions := new(List)
 	route := NewRouteExpression("/", "http://localhost")
-	route.AddTargetRule(&CacheTargetRule{ Content: "This is the end"})
+	route.AddTargetRule(&ContentTargetRule{ Content: "This is the end"})
 	routeexpressions.Insert (*route)
 
 	t.Logf("* Testing Rule chain, Path: %s, Host: %s\n", req.URL.Path, fmt.Sprintf("%s://%s", req.URL.Scheme, req.URL.Host))
@@ -57,7 +57,11 @@ func TestCacheRulesFindTargetGroupByRouteExpression(t *testing.T) {
 	t.Logf("Found %+v", rs)
 
 	// Serve an example
-	route.ServeHTTP(res, req)
+	for _, element := range rs.Target {
+		if (element.ServeHTTP(res, req)) {
+			break;
+		}
+	}
 
 
 	resp := res.Result()
@@ -83,7 +87,11 @@ func TestProxyRulesFindTargetGroupByRouteExpression(t *testing.T) {
 	}
 
 	// Serve an example
-	rs.ServeHTTP(res, req)
+	for _, element := range rs.Target {
+		if (element.ServeHTTP(res, req)) {
+			break;
+		}
+	}
 
 	resp := res.Result()
 	body, _ := ioutil.ReadAll(resp.Body)

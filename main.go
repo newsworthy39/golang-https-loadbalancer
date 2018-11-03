@@ -57,7 +57,7 @@ type ProxyTargetRule struct {
 	activeBackendConnections int
 }
 
-type CacheTargetRule struct {
+type ContentTargetRule struct {
 	Content string
 	Headers []string
 	StatusCode int
@@ -92,7 +92,7 @@ func (p* ProxyTargetRule) ServeHTTP( res http.ResponseWriter, req *http.Request)
 }
 
 
-func (p* CacheTargetRule) ServeHTTP( res http.ResponseWriter, req *http.Request) bool {
+func (p* ContentTargetRule) ServeHTTP( res http.ResponseWriter, req *http.Request) bool {
 	for _, element := range p.Headers {
 		s := strings.SplitN(element,":", 2)
 		res.Header().Add(s[0], s[1])
@@ -110,17 +110,6 @@ type RouteExpression struct {
         StatusCodes []int64
         AccessTime  int64
 	Target []Target
-}
-
-func (r* RouteExpression) ServeHTTP( res http.ResponseWriter, req *http.Request) {
-	// We loop through all elements, until we hit somebody, 
-	// taking responsibility, for execution. That is, 
-	// we use early-return, to abort filter-execution.
-	for _, element := range r.Target {
-		if (element.ServeHTTP(res, req)) {
-			break ;
-		}
-	}
 }
 
 func (r* RouteExpression) AddTargetRule(rule Target) {
@@ -231,6 +220,7 @@ func (l* List) FindTargetGroupByRouteExpression(req *http.Request) (RouteExpress
 	return RouteExpression{}, errors.New("FindTargetGRoupByRouteExpression: No routes found")
 }
 
+// NCSA Logging Format to log.
 func NCSALogger(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 
@@ -254,6 +244,7 @@ func NCSALogger(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// This ensures, we have the necessary http-headers, to look in our lists.
 func EnsureHTTPProtocolHeaders(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Make sure, we have a protocol, matching our listener proto.
@@ -269,7 +260,7 @@ func main() {
 	routeexpressions := new(List)
 
 	route := NewRouteExpression("/", fmt.Sprintf("http://192.168.1.11:%s", getEnv("PORT", "9999")))
-	route.AddTargetRule(&CacheTargetRule{ Content: "Location moved", StatusCode: 301, Headers: []string { "Location: https://www.dr.dk"} } )
+	route.AddTargetRule(&ContentTargetRule{ Content: "Location moved", StatusCode: 301, Headers: []string { "Location: https://www.dr.dk"} } )
 	route.AddTargetRule(&ProxyTargetRule{ Target: "https://www.tuxand.me", MaxBackendConnections: 4})
 	routeexpressions.Insert (*route)
 
@@ -302,7 +293,12 @@ func main() {
 		// * Redirect-applications (ie, http->https redirects, )
 		// * Publisher-producer system (ie, uploaded error-pages etc)
 		// * Proxy-cache event-based notification systems
-		routeExpression.ServeHTTP(res, req)
+		for _, element := range routeExpression.Target {
+			if (element.ServeHTTP(res, req)) {
+				return ;
+			}
+		}
+
 
 		return
 	})))
