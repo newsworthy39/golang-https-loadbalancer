@@ -21,7 +21,7 @@ type Target interface {
 
 type ProxyTargetRule struct {
 	Target string
-	transport http.Transport
+	transport *http.Transport
 }
 
 type CacheTargetRule struct {
@@ -30,12 +30,14 @@ type CacheTargetRule struct {
 }
 
 func (p* ProxyTargetRule) ServeHTTP( res http.ResponseWriter, req *http.Request) bool {
-	tr := &http.Transport{
-		MaxIdleConns:       10,
-		IdleConnTimeout:    30 * time.Second,
-		DisableCompression: true,
+	if p.transport == nil {
+		p.transport = &http.Transport{
+			MaxIdleConns:       10,
+			IdleConnTimeout:    30 * time.Second,
+			DisableCompression: true }
 	}
-	client := &http.Client{Transport: tr }
+
+	client := &http.Client{Transport: p.transport }
 	resp, err := client.Get(p.Target)
 
 	if err != nil {
@@ -192,7 +194,7 @@ func main() {
 	routeexpressions := new(List)
 
 	route := NewRouteExpression("/", fmt.Sprintf("http://192.168.1.11:%s", getEnv("PORT", "9999")))
-	route.AddTargetRule(&CacheTargetRule{ Content: "Cached https://www.tuxand.me", StatusCode: 200})
+//	route.AddTargetRule(&CacheTargetRule{ Content: "Cached https://www.tuxand.me", StatusCode: 200})
 	route.AddTargetRule(&ProxyTargetRule{ Target: "https://www.tuxand.me"})
 	routeexpressions.Insert (*route)
 
