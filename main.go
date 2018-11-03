@@ -5,17 +5,56 @@ import (
 //	"encoding/json"
 	"fmt"
 //	zmq "github.com/pebbe/zmq4"
-//	"io/ioutil"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 //	"regexp"
-//	"strings"
+	"strings"
+	"time"
 	uuid "github.com/google/uuid"
 )
 
-type TargetGroup struct {
-	Uuid uuid.UUID
+type Target interface {
+	ServeHTTP( res http.ResponseWriter, req *http.Request) bool
+}
+
+type ProxyTargetRule struct {
+	Target string
+	transport http.Transport
+}
+
+type CacheTargetRule struct {
+	Content string
+	StatusCode int
+}
+
+func (p* ProxyTargetRule) ServeHTTP( res http.ResponseWriter, req *http.Request) bool {
+	tr := &http.Transport{
+		MaxIdleConns:       10,
+		IdleConnTimeout:    30 * time.Second,
+		DisableCompression: true,
+	}
+	client := &http.Client{Transport: tr }
+	resp, err := client.Get(p.Target)
+
+	if err != nil {
+		// handle error
+	}
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	res.WriteHeader(resp.StatusCode)
+	res.Write([]byte(body))
+
+	return true
+}
+
+
+func (p* CacheTargetRule) ServeHTTP( res http.ResponseWriter, req *http.Request) bool {
+	res.WriteHeader(p.StatusCode)
+	res.Write([]byte(p.Content))
+
+	return true
 }
 
 type RouteExpression struct {
@@ -24,7 +63,30 @@ type RouteExpression struct {
 	Host string
         StatusCodes []int64
         AccessTime  int64
-	TargetGroupUUID int64
+	Target []Target
+}
+
+func (r* RouteExpression) ServeHTTP( res http.ResponseWriter, req *http.Request) {
+	// We loop through all elements, until we hit somebody, 
+	// taking responsibility, for execution. That is, 
+	// we use early-return, to abort filter-execution.
+	for _, element := range r.Target {
+		if (element.ServeHTTP(res, req)) {
+			break ;
+		}
+	}
+}
+
+func (r* RouteExpression) AddTargetRule(rule Target) {
+	r.Target = append(r.Target, rule)
+}
+
+func NewRouteExpression(Path string, Host string ) *RouteExpression {
+	route := new(RouteExpression)
+	route.Uuid,_ = uuid.NewRandom()
+	route.Path = Path
+	route.Host = Host
+	return route
 }
 
 type Node struct {
@@ -110,13 +172,16 @@ func (l* List) FindTargetGroupByRouteExpression(req *http.Request) (RouteExpress
         list := l.head
         for list != nil {
 		routeExpression := list.key.(RouteExpression)
-		if (req.URL.Path == routeExpression.Path) {
+		// if / == / and http(s)://somedomain.com:$PORT == http(s)://somedomain.com:$PORT
+
+		if (strings.HasSuffix(req.URL.Path, routeExpression.Path) &&
+			strings.Compare(fmt.Sprintf("%s://%s", req.URL.Scheme, req.Host),
+				routeExpression.Host) == 0) {
+
 			return routeExpression, nil
 		}
-                fmt.Printf("%+v ->", list.key)
                 list = list.next
         }
-        fmt.Println()
 	return RouteExpression{}, errors.New("FindTargetGRoupByRouteExpression: No routes found")
 }
 
@@ -126,8 +191,17 @@ func main() {
 	// We set, this to -1, thus default is 0.
 	routeexpressions := new(List)
 
+	route := NewRouteExpression("/", fmt.Sprintf("http://192.168.1.11:%s", getEnv("PORT", "9999")))
+	route.AddTargetRule(&CacheTargetRule{ Content: "Cached https://www.tuxand.me", StatusCode: 200})
+	route.AddTargetRule(&ProxyTargetRule{ Target: "https://www.tuxand.me"})
+	routeexpressions.Insert (*route)
+
 	// Start webserver, capture apps and use that.
 	http.HandleFunc("/", func( res http.ResponseWriter, req *http.Request) {
+
+		// Make sure, we have a protocol, matching our listener proto.
+		req.URL.Scheme = "http"
+
 		// Next, run though apps, and find a exact-match.
 		routeExpression, err := routeexpressions.FindTargetGroupByRouteExpression(req)
 		if err != nil {
@@ -149,10 +223,9 @@ func main() {
 		// * Redirect-applications (ie, http->https redirects, )
 		// * Publisher-producer system (ie, uploaded error-pages etc)
 		// * Proxy-cache event-based notification systems
-		go func( res http.ResponseWriter, req *http.Request, rs RouteExpression) {
-			fmt.Printf("Serving %+v", rs)
-		}(res, req, routeExpression)
+		routeExpression.ServeHTTP(res, req)
 
+		return
 	})
 
 	err := http.ListenAndServe(fmt.Sprintf(":%s", getEnv("PORT", "9999")), nil)
