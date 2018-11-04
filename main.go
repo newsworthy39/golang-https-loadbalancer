@@ -1,6 +1,7 @@
 package main
 
 import (
+	"sync"
 	"bytes"
 	"errors"
 //	"encoding/json"
@@ -16,44 +17,36 @@ import (
 	uuid "github.com/google/uuid"
 )
 
-type stResponseWriter struct {
-	http.ResponseWriter
-	HTTPStatus   int
-	ResponseSize int
+type bufferedResponseWriter struct {
+    http.ResponseWriter // embed struct
+    HTTPStatus   int
+    ResponseSize int
+    buf *bytes.Buffer
 }
 
-func (w *stResponseWriter) WriteHeader(status int) {
+func (w *bufferedResponseWriter) WriteHeader(status int) {
 	w.HTTPStatus = status
-	w.ResponseWriter.WriteHeader(status)
 }
 
-func (w *stResponseWriter) Flush() {
+func (w *bufferedResponseWriter) Flush() {
 	z := w.ResponseWriter
+	z.WriteHeader(w.HTTPStatus)
+	z.Write(w.buf.Bytes())
 	if f, ok := z.(http.Flusher); ok {
 		f.Flush()
 	}
 }
-
-type bufferedResponseWriter struct {
-    http.ResponseWriter // embed struct
-    buf *bytes.Buffer
-}
-
-func (mrw *bufferedResponseWriter) Write(p []byte) (int, error) {
-    return mrw.buf.Write(p)
-}
-
-func (w *stResponseWriter) CloseNotify() <-chan bool {
+func (w *bufferedResponseWriter) CloseNotify() <-chan bool {
 	z := w.ResponseWriter
 	return z.(http.CloseNotifier).CloseNotify()
 }
 
-func (w *stResponseWriter) Write(b []byte) (int, error) {
+func (w *bufferedResponseWriter) Write(b []byte) (int, error) {
 	if w.HTTPStatus == 0 {
 		w.HTTPStatus = 200
 	}
 	w.ResponseSize = len(b)
-	return w.ResponseWriter.Write(b)
+        return w.buf.Write(b)
 }
 
 type Target interface {
@@ -90,11 +83,11 @@ func (p* ProxyTargetRule) ServeHTTP( res http.ResponseWriter, req *http.Request)
 		},
 	}
 	resp, err := client.Get(p.Target)
-
 	if err != nil {
 		// handle error
 	}
 	defer resp.Body.Close()
+
 	body, err := ioutil.ReadAll(resp.Body)
 	res.WriteHeader(resp.StatusCode)
 	res.Write([]byte(body))
@@ -150,12 +143,12 @@ type CacheTargetRule struct {
 	Next Target
 	Cache* ContentTargetRule
 	IsNew bool
-
+	sync.RWMutex
 }
 
 func NewCacheTargetRule(Destination string) *CacheTargetRule {
 	target := NewProxyTargetRule(Destination, 10)
-	cache  := NewContentTargetRule("test")
+	cache  := NewContentTargetRule("")
 	rule := CacheTargetRule{ Cache: cache, IsNew: true }
 	rule.AddTargetRule(target)
 	return &rule
@@ -163,25 +156,22 @@ func NewCacheTargetRule(Destination string) *CacheTargetRule {
 
 func (c* CacheTargetRule) ServeHTTP ( res http.ResponseWriter, req *http.Request) {
 
+	// Setup read-locking, using double-locking.
+	c.RLock()
 	if c.IsNew {
-		interceptWriter := bufferedResponseWriter{res, bytes.NewBuffer(nil)}
-
-		// finally, 
-		c.Next.ServeHTTP(&interceptWriter, req)
-
-		//r.Method,
-		// r.URL.Path,
-		//r.Proto,
-
-		// Make into String.
-		c.Cache = NewContentCompleteTargetRule(interceptWriter.buf, []string{ "X-Cache-Hit: Hit" }, 200 )
-
-		c.IsNew = false
-
+	c.RUnlock()
+			c.Lock()
+			interceptWriter := bufferedResponseWriter{res, 0, 0, bytes.NewBuffer(nil) }
+			c.Next.ServeHTTP(&interceptWriter, req)
+			c.Cache = NewContentCompleteTargetRule(interceptWriter.buf,
+				[]string{ "X-Cache-Hit: Hit" }, interceptWriter.HTTPStatus )
+			c.IsNew = false
+			c.Unlock()
 	}
 
+	c.RLock()
 	c.Cache.ServeHTTP(res, req)
-
+	c.RUnlock()
 }
 
 func (t* CacheTargetRule) AddTargetRule(rule Target) {
@@ -324,7 +314,7 @@ func NCSALogger(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 
 		t := time.Now()
-		interceptWriter := stResponseWriter{w, 0, 0}
+		interceptWriter := bufferedResponseWriter{w, 0, 0, bytes.NewBuffer(nil) }
 
 		next.ServeHTTP(&interceptWriter, r)
 
@@ -340,6 +330,10 @@ func NCSALogger(next http.HandlerFunc) http.HandlerFunc {
 			r.UserAgent(),
 			time.Since(t),
 		)
+
+		// BufferedResponseWriters, require us to manually, call Flush, 
+		// This emits, the recorded status and body.
+		interceptWriter.Flush()
 	}
 }
 
@@ -348,6 +342,7 @@ func EnsureHTTPProtocolHeaders(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Make sure, we have a protocol, matching our listener proto.
 		r.URL.Scheme = "http"
+		r.Proto = "http"
 
 		next.ServeHTTP(w, r)
 	}
