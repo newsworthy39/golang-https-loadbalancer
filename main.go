@@ -66,7 +66,7 @@ type ProxyTargetRule struct {
 	transport [64]*http.Transport
 	MaxBackendConnections int
 	activeBackendConnections int
-	Next Target
+	Next* Target
 }
 
 func NewProxyTargetRule(Destination string, MaxBackends int) *ProxyTargetRule {
@@ -82,7 +82,13 @@ func (p* ProxyTargetRule) ServeHTTP( res http.ResponseWriter, req *http.Request)
 			DisableCompression: true }
 	}
 
-	client := &http.Client{Transport: p.transport[p.activeBackendConnections] }
+	// Setup client.
+	client := &http.Client{
+		Transport: p.transport[p.activeBackendConnections],
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	resp, err := client.Get(p.Target)
 
 	if err != nil {
@@ -100,7 +106,7 @@ func (p* ProxyTargetRule) ServeHTTP( res http.ResponseWriter, req *http.Request)
 	}
 
 	if (p.Next != nil) {
-		p.Next.ServeHTTP(res, req)
+		(*p.Next).ServeHTTP(res, req)
 	}
 }
 
@@ -108,8 +114,15 @@ type ContentTargetRule struct {
 	Content string
 	Headers []string
 	StatusCode int
-	Next Target
+	Next* Target
 }
+
+func NewContentCompleteTargetRule(Content *bytes.Buffer, Headers []string, StatusCode int) *ContentTargetRule {
+	return &ContentTargetRule{Content: Content.String(),
+		Headers : Headers,
+		StatusCode: StatusCode}
+}
+
 
 func NewContentTargetRule(Content string) *ContentTargetRule {
 	return &ContentTargetRule{Content: Content,
@@ -135,20 +148,22 @@ func (p* ContentTargetRule) ServeHTTP( res http.ResponseWriter, req *http.Reques
 
 type CacheTargetRule struct {
 	Next Target
-	Cache *bytes.Buffer
+	Cache* ContentTargetRule
+	IsNew bool
 
 }
 
 func NewCacheTargetRule(Destination string) *CacheTargetRule {
 	target := NewProxyTargetRule(Destination, 10)
-	rule := CacheTargetRule{ Cache: bytes.NewBuffer(nil) }
+	cache  := NewContentTargetRule("test")
+	rule := CacheTargetRule{ Cache: cache, IsNew: true }
 	rule.AddTargetRule(target)
 	return &rule
 }
 
 func (c* CacheTargetRule) ServeHTTP ( res http.ResponseWriter, req *http.Request) {
 
-	if c.Cache.Len() <= 0 {
+	if c.IsNew {
 		interceptWriter := bufferedResponseWriter{res, bytes.NewBuffer(nil)}
 
 		// finally, 
@@ -158,18 +173,15 @@ func (c* CacheTargetRule) ServeHTTP ( res http.ResponseWriter, req *http.Request
 		// r.URL.Path,
 		//r.Proto,
 
-		c.Cache = interceptWriter.buf
+		// Make into String.
+		c.Cache = NewContentCompleteTargetRule(interceptWriter.buf, []string{ "X-Cache-Hit: Hit" }, 200 )
 
-		// Check if cache is ok, if not, then send to ProxyTargetRule
-		res.Header().Add("X-Cache-Hit", "Pass")
+		c.IsNew = false
 
-	} else {
-		// Check if cache is ok, if not, then send to ProxyTargetRule
-		res.Header().Add("X-Cache-Hit", "Hit")
 	}
 
-	// allways write out.
-	res.Write(c.Cache.Bytes())
+	c.Cache.ServeHTTP(res, req)
+
 }
 
 func (t* CacheTargetRule) AddTargetRule(rule Target) {
@@ -183,18 +195,18 @@ type RouteExpression struct {
 	Host string
         StatusCodes []int64
         AccessTime  int64
-	Next Target
+	Next *Target
 }
 
 func (r* RouteExpression) AddTargetRule(rule Target) {
-	r.Next = rule
+	r.Next = &rule
 }
 
 func (t* ContentTargetRule) AddTargetRule(rule Target) {
-	t.Next = rule
+	t.Next = &rule
 }
 func (t* ProxyTargetRule) AddTargetRule(rule Target) {
-	t.Next = rule
+	t.Next = &rule
 }
 
 
@@ -208,7 +220,7 @@ func NewRouteExpression(Path string, Host string ) *RouteExpression {
 }
 
 func (r* RouteExpression) ServeHTTP( res http.ResponseWriter, req *http.Request) {
-	r.Next.ServeHTTP(res,req)
+	(*r.Next).ServeHTTP(res,req)
 }
 
 type Node struct {
@@ -351,17 +363,22 @@ func main() {
 
 	rootRule := NewRedirectTargetRule( "https://www.dr.dk/", 301 )
 	rootRule.AddTargetRule(NewProxyTargetRule("https://www.tuxand.me", 4)) // this is meaningless.
-	route.AddTargetRule(rootRule )
+	route.AddTargetRule(rootRule)
 
 	routeexpressions.Insert (*route)
 
 
 	/* Functionality testing */
 	cacheRoute := NewRouteExpression("/cache", fmt.Sprintf("http://192.168.1.11:%s", getEnv("PORT", "9999")))
-	backendCacheRule := NewCacheTargetRule( "https://www.tuxand.me" )
+	backendCacheRule := NewCacheTargetRule( "http://www.tuxand.me" )
 	cacheRoute.AddTargetRule(backendCacheRule )
 	routeexpressions.Insert (*cacheRoute)
 
+	/* Functionality testing */
+	contentRoute := NewRouteExpression("/content", fmt.Sprintf("http://192.168.1.11:%s", getEnv("PORT", "9999")))
+	contentCacheRule := NewContentTargetRule( "http://www.microscopy-uk.org.uk/mag/indexmag.html" )
+	contentRoute.AddTargetRule(contentCacheRule)
+	routeexpressions.Insert (*contentRoute)
 
 	// Start webserver, capture apps and use that.
 	http.HandleFunc("/", EnsureHTTPProtocolHeaders(
