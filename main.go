@@ -88,6 +88,10 @@ func (p* ProxyTargetRule) ServeHTTP( res http.ResponseWriter, req *http.Request)
 	}
 	defer resp.Body.Close()
 
+	for name, values := range resp.Header {
+                res.Header()[name] = values
+        }
+
 	body, err := ioutil.ReadAll(resp.Body)
 	res.WriteHeader(resp.StatusCode)
 	res.Write([]byte(body))
@@ -110,8 +114,8 @@ type ContentTargetRule struct {
 	Next* Target
 }
 
-func NewContentCompleteTargetRule(Content *bytes.Buffer, Headers []string, StatusCode int) *ContentTargetRule {
-	return &ContentTargetRule{Content: Content.String(),
+func NewContentCompleteTargetRule(Content string, Headers []string, StatusCode int) *ContentTargetRule {
+	return &ContentTargetRule{Content: Content,
 		Headers : Headers,
 		StatusCode: StatusCode}
 }
@@ -141,15 +145,14 @@ func (p* ContentTargetRule) ServeHTTP( res http.ResponseWriter, req *http.Reques
 
 type CacheTargetRule struct {
 	Next Target
-	Cache* ContentTargetRule
+	Cache* bufferedResponseWriter
 	IsNew bool
 	sync.RWMutex
 }
 
 func NewCacheTargetRule(Destination string) *CacheTargetRule {
 	target := NewProxyTargetRule(Destination, 10)
-	cache  := NewContentTargetRule("")
-	rule := CacheTargetRule{ Cache: cache, IsNew: true }
+	rule   := CacheTargetRule{ IsNew: true }
 	rule.AddTargetRule(target)
 	return &rule
 }
@@ -161,23 +164,26 @@ func (c* CacheTargetRule) ServeHTTP ( res http.ResponseWriter, req *http.Request
 	if c.IsNew {
 	c.RUnlock()
 			c.Lock()
-			interceptWriter := bufferedResponseWriter{res, 0, 0, bytes.NewBuffer(nil) }
-			c.Next.ServeHTTP(&interceptWriter, req)
-			c.Cache = NewContentCompleteTargetRule(interceptWriter.buf,
-				[]string{ "X-Cache-Hit: Hit" }, interceptWriter.HTTPStatus )
+			interceptWriter := &bufferedResponseWriter{res, 0, 0, bytes.NewBuffer(nil) }
+			interceptWriter.Header().Add("X-Cache-Hit", "HIT")
+			c.Next.ServeHTTP(interceptWriter, req)
+			c.Cache = interceptWriter
 			c.IsNew = false
 			c.Unlock()
 	}
 
 	c.RLock()
-	c.Cache.ServeHTTP(res, req)
+	for name, values := range c.Cache.Header() {
+		res.Header()[name] = values
+	}
+	res.WriteHeader(c.Cache.HTTPStatus)
+	res.Write(c.Cache.buf.Bytes())
 	c.RUnlock()
 }
 
 func (t* CacheTargetRule) AddTargetRule(rule Target) {
 	t.Next = rule
 }
-
 
 type RouteExpression struct {
 	Uuid uuid.UUID
