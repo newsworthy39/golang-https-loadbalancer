@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 //	"encoding/json"
 	"fmt"
@@ -33,6 +34,15 @@ func (w *stResponseWriter) Flush() {
 	}
 }
 
+type bufferedResponseWriter struct {
+    http.ResponseWriter // embed struct
+    buf *bytes.Buffer
+}
+
+func (mrw *bufferedResponseWriter) Write(p []byte) (int, error) {
+    return mrw.buf.Write(p)
+}
+
 func (w *stResponseWriter) CloseNotify() <-chan bool {
 	z := w.ResponseWriter
 	return z.(http.CloseNotifier).CloseNotify()
@@ -47,7 +57,8 @@ func (w *stResponseWriter) Write(b []byte) (int, error) {
 }
 
 type Target interface {
-	ServeHTTP( res http.ResponseWriter, req *http.Request) bool
+	ServeHTTP( res http.ResponseWriter, req *http.Request)
+	AddTargetRule(Target Target)
 }
 
 type ProxyTargetRule struct {
@@ -55,15 +66,15 @@ type ProxyTargetRule struct {
 	transport [64]*http.Transport
 	MaxBackendConnections int
 	activeBackendConnections int
+	Next Target
 }
 
-type ContentTargetRule struct {
-	Content string
-	Headers []string
-	StatusCode int
+func NewProxyTargetRule(Destination string, MaxBackends int) *ProxyTargetRule {
+	return &ProxyTargetRule{Target: Destination,
+		MaxBackendConnections : MaxBackends,}
 }
 
-func (p* ProxyTargetRule) ServeHTTP( res http.ResponseWriter, req *http.Request) bool {
+func (p* ProxyTargetRule) ServeHTTP( res http.ResponseWriter, req *http.Request)  {
 	if p.transport[p.activeBackendConnections] == nil {
 		p.transport[p.activeBackendConnections] = &http.Transport{
 			MaxIdleConns:       10,
@@ -82,26 +93,89 @@ func (p* ProxyTargetRule) ServeHTTP( res http.ResponseWriter, req *http.Request)
 	res.WriteHeader(resp.StatusCode)
 	res.Write([]byte(body))
 
+	// Increase and rotate mod MaxBackendConnections.
 	p.activeBackendConnections++
-
 	if p.activeBackendConnections%p.MaxBackendConnections == 0 {
 		p.activeBackendConnections = 0
 	}
 
-	return true
+	if (p.Next != nil) {
+		p.Next.ServeHTTP(res, req)
+	}
 }
 
+type ContentTargetRule struct {
+	Content string
+	Headers []string
+	StatusCode int
+	Next Target
+}
 
-func (p* ContentTargetRule) ServeHTTP( res http.ResponseWriter, req *http.Request) bool {
+func NewContentTargetRule(Content string) *ContentTargetRule {
+	return &ContentTargetRule{Content: Content,
+		Headers : []string{},
+		StatusCode: 200}
+}
+
+func NewRedirectTargetRule(Destination string, Redirect int) *ContentTargetRule {
+	return &ContentTargetRule{Content: fmt.Sprintf("Content Moved HTTP %d", Redirect),
+	Headers : []string{ fmt.Sprintf("Location: %s", Destination) },
+		StatusCode: Redirect }
+}
+
+func (p* ContentTargetRule) ServeHTTP( res http.ResponseWriter, req *http.Request)  {
+
 	for _, element := range p.Headers {
 		s := strings.SplitN(element,":", 2)
 		res.Header().Add(s[0], s[1])
 	}
 	res.WriteHeader(p.StatusCode)
 	res.Write([]byte(p.Content))
-
-	return true
 }
+
+type CacheTargetRule struct {
+	Next Target
+	Cache *bytes.Buffer
+
+}
+
+func NewCacheTargetRule(Destination string) *CacheTargetRule {
+	target := NewProxyTargetRule(Destination, 10)
+	rule := CacheTargetRule{ Cache: bytes.NewBuffer(nil) }
+	rule.AddTargetRule(target)
+	return &rule
+}
+
+func (c* CacheTargetRule) ServeHTTP ( res http.ResponseWriter, req *http.Request) {
+
+	if c.Cache.Len() <= 0 {
+		interceptWriter := bufferedResponseWriter{res, bytes.NewBuffer(nil)}
+
+		// finally, 
+		c.Next.ServeHTTP(&interceptWriter, req)
+
+		//r.Method,
+		// r.URL.Path,
+		//r.Proto,
+
+		c.Cache = interceptWriter.buf
+
+		// Check if cache is ok, if not, then send to ProxyTargetRule
+		res.Header().Add("X-Cache-Hit", "Pass")
+
+	} else {
+		// Check if cache is ok, if not, then send to ProxyTargetRule
+		res.Header().Add("X-Cache-Hit", "Hit")
+	}
+
+	// allways write out.
+	res.Write(c.Cache.Bytes())
+}
+
+func (t* CacheTargetRule) AddTargetRule(rule Target) {
+	t.Next = rule
+}
+
 
 type RouteExpression struct {
 	Uuid uuid.UUID
@@ -109,12 +183,21 @@ type RouteExpression struct {
 	Host string
         StatusCodes []int64
         AccessTime  int64
-	Target []Target
+	Next Target
 }
 
 func (r* RouteExpression) AddTargetRule(rule Target) {
-	r.Target = append(r.Target, rule)
+	r.Next = rule
 }
+
+func (t* ContentTargetRule) AddTargetRule(rule Target) {
+	t.Next = rule
+}
+func (t* ProxyTargetRule) AddTargetRule(rule Target) {
+	t.Next = rule
+}
+
+
 
 func NewRouteExpression(Path string, Host string ) *RouteExpression {
 	route := new(RouteExpression)
@@ -122,6 +205,10 @@ func NewRouteExpression(Path string, Host string ) *RouteExpression {
 	route.Path = Path
 	route.Host = Host
 	return route
+}
+
+func (r* RouteExpression) ServeHTTP( res http.ResponseWriter, req *http.Request) {
+	r.Next.ServeHTTP(res,req)
 }
 
 type Node struct {
@@ -259,21 +346,33 @@ func main() {
 	// We set, this to -1, thus default is 0.
 	routeexpressions := new(List)
 
+	/* Functionality testing */
 	route := NewRouteExpression("/", fmt.Sprintf("http://192.168.1.11:%s", getEnv("PORT", "9999")))
-	route.AddTargetRule(&ContentTargetRule{ Content: "Location moved", StatusCode: 301, Headers: []string { "Location: https://www.dr.dk"} } )
-	route.AddTargetRule(&ProxyTargetRule{ Target: "https://www.tuxand.me", MaxBackendConnections: 4})
+
+	rootRule := NewRedirectTargetRule( "https://www.dr.dk/", 301 )
+	rootRule.AddTargetRule(NewProxyTargetRule("https://www.tuxand.me", 4)) // this is meaningless.
+	route.AddTargetRule(rootRule )
+
 	routeexpressions.Insert (*route)
+
+
+	/* Functionality testing */
+	cacheRoute := NewRouteExpression("/cache", fmt.Sprintf("http://192.168.1.11:%s", getEnv("PORT", "9999")))
+	backendCacheRule := NewCacheTargetRule( "https://www.tuxand.me" )
+	cacheRoute.AddTargetRule(backendCacheRule )
+	routeexpressions.Insert (*cacheRoute)
+
 
 	// Start webserver, capture apps and use that.
 	http.HandleFunc("/", EnsureHTTPProtocolHeaders(
-				NCSALogger(
+//				NCSALogger(
 					func( res http.ResponseWriter, req *http.Request) {
 
 		// Make sure, we have a protocol, matching our listener proto.
 		req.URL.Scheme = "http"
 
 		// Next, run though apps, and find a exact-match.
-		routeExpression, err := routeexpressions.FindTargetGroupByRouteExpression(req)
+		rs, err := routeexpressions.FindTargetGroupByRouteExpression(req)
 		if err != nil {
 			// Deliver, not found, here is a problem to do sort-of-a-root-accounting.
 			res.WriteHeader(http.StatusNotFound)
@@ -293,15 +392,11 @@ func main() {
 		// * Redirect-applications (ie, http->https redirects, )
 		// * Publisher-producer system (ie, uploaded error-pages etc)
 		// * Proxy-cache event-based notification systems
-		for _, element := range routeExpression.Target {
-			if (element.ServeHTTP(res, req)) {
-				return ;
-			}
-		}
-
+		rs.ServeHTTP(res, req)
 
 		return
-	})))
+	}))
+//)
 
 	err := http.ListenAndServe(fmt.Sprintf(":%s", getEnv("PORT", "9999")), nil)
 	log.Fatal(err)
