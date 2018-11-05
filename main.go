@@ -126,8 +126,6 @@ func NewContentCompleteTargetRule(Content string, Headers []string, StatusCode i
 		s := strings.SplitN(element,":", 2)
 		t.Header().Add(s[0], s[1])
 	}
-
-	t.Header().Add("X-CacheRule","TRUE")
 	return t
 }
 
@@ -136,9 +134,6 @@ func NewContentTargetRule(Content string) *ContentTargetRule {
 	t := &ContentTargetRule{Content: Content,
 		header : make(map[string][]string),
 		StatusCode: 200}
-
-	t.Header().Add("X-CacheRule","TRUE")
-
 	return t
 }
 
@@ -146,8 +141,6 @@ func NewRedirectTargetRule(Destination string, Redirect int) *ContentTargetRule 
 	t := &ContentTargetRule{Content: fmt.Sprintf("Content Moved HTTP %d", Redirect),
 		header : make(map[string][]string),
 		StatusCode: Redirect }
-
-	t.Header().Add("X-CacheRule","TRUE")
 	t.Header().Add("Location", Destination)
 
 	return t
