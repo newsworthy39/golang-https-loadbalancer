@@ -11,8 +11,7 @@ func TestFindTargetGroupByRouteExpression(t *testing.T) {
 	req := httptest.NewRequest("GET", "http://localhost/test", nil)
 
 	routeexpressions := new(List)
-	routeexpressions.Insert (*NewRouteExpression("/", "http://localhost"))
-	routeexpressions.Insert (*NewRouteExpression("/test", "http://localhost"))
+	routeexpressions.Insert (*NewRouteExpression("http://localhost/"))
 
 	t.Logf("* Testing found functionality, Path: %s, Host: %s\n", req.URL.Path, fmt.Sprintf("%s://%s", req.URL.Scheme, req.URL.Host))
 	rs, err := routeexpressions.FindTargetGroupByRouteExpression(req)
@@ -28,7 +27,7 @@ func TestNotFindTargetGroupByRouteExpression(t *testing.T) {
 	req := httptest.NewRequest("GET", "http://localhost/", nil)
 
 	routeexpressions := new(List)
-	routeexpressions.Insert (*NewRouteExpression("/", "https://localhost"))
+	routeexpressions.Insert (*NewRouteExpression("https://localhost/"))
 
 	t.Logf("* Testing not-found functionality, Path: %s, Host: %s\n", req.URL.Path, fmt.Sprintf("%s://%s", req.URL.Scheme, req.URL.Host))
 	rs, err := routeexpressions.FindTargetGroupByRouteExpression(req)
@@ -45,7 +44,7 @@ func TestCacheRulesFindTargetGroupByRouteExpression(t *testing.T) {
 	res := httptest.NewRecorder()
 
 	routeexpressions := new(List)
-	route := NewRouteExpression("/", "http://localhost")
+	route := NewRouteExpression("http://localhost/")
 	route.AddTargetRule(NewContentTargetRule("This is the end"))
 	routeexpressions.Insert (*route)
 
@@ -70,7 +69,7 @@ func TestProxyRulesFindTargetGroupByRouteExpression(t *testing.T) {
 	res := httptest.NewRecorder()
 
 	routeexpressions := new(List)
-	route := NewRouteExpression("/", "http://localhost")
+	route := NewRouteExpression("http://localhost/")
 	route.AddTargetRule(NewProxyTargetRule("https://www.tuxand.me", 10))
 	routeexpressions.Insert (*route)
 
@@ -95,7 +94,7 @@ func TestRedirectTargetRule(t *testing.T) {
 	res := httptest.NewRecorder()
 
 	routeexpressions := new(List)
-	route := NewRouteExpression("/", "http://localhost")
+	route := NewRouteExpression("http://localhost/")
 	route.AddTargetRule(NewRedirectTargetRule("https://www.tuxand.me", 301))
 	routeexpressions.Insert (*route)
 
@@ -121,7 +120,7 @@ func TestCacheTargetRule(t *testing.T) {
 	res := httptest.NewRecorder()
 
 	routeexpressions := new(List)
-	route := NewRouteExpression("/cache", "http://localhost")
+	route := NewRouteExpression("http://localhost/cache")
 	route.AddTargetRule(NewCacheTargetRule("http://www.tuxand.me"))
 	routeexpressions.Insert (*route)
 

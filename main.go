@@ -14,7 +14,6 @@ import (
 //	"regexp"
 	"strings"
 	"time"
-	uuid "github.com/google/uuid"
 )
 
 type bufferedResponseWriter struct {
@@ -205,9 +204,7 @@ func (c* CacheTargetRule) ServeHTTP ( res http.ResponseWriter, req *http.Request
 }
 
 type RouteExpression struct {
-	Uuid uuid.UUID
 	Path string
-	Host string
         StatusCodes []int64
         AccessTime  int64
 	Next *Target
@@ -229,11 +226,9 @@ func (t* CacheTargetRule) AddTargetRule(rule Target) {
 }
 
 
-func NewRouteExpression(Path string, Host string ) *RouteExpression {
+func NewRouteExpression(Path string) *RouteExpression {
 	route := new(RouteExpression)
-	route.Uuid,_ = uuid.NewRandom()
 	route.Path = Path
-	route.Host = Host
 	return route
 }
 
@@ -324,12 +319,9 @@ func (l* List) FindTargetGroupByRouteExpression(req *http.Request) (RouteExpress
         list := l.head
         for list != nil {
 		routeExpression := list.key.(RouteExpression)
-		// if / == / and http(s)://somedomain.com:$PORT == http(s)://somedomain.com:$PORT
-
-		if (strings.HasSuffix(req.URL.Path, routeExpression.Path) &&
-			strings.Compare(fmt.Sprintf("%s://%s", req.URL.Scheme, req.Host),
-				routeExpression.Host) == 0) {
-
+		// http(s)://somedomain.com:$PORT/Path == http(s)://somedomain.com:$PORT/Path
+		if (strings.HasPrefix(fmt.Sprintf("%s://%s%s", req.URL.Scheme, req.Host, req.URL.Path),
+				routeExpression.Path)) {
 			return routeExpression, nil
 		}
                 list = list.next
@@ -370,8 +362,6 @@ func EnsureHTTPProtocolHeaders(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Make sure, we have a protocol, matching our listener proto.
 		r.URL.Scheme = "http"
-		r.Proto = "http"
-
 		next.ServeHTTP(w, r)
 	}
 }
@@ -382,34 +372,30 @@ func main() {
 	routeexpressions := new(List)
 
 	/* Functionality testing */
-	route := NewRouteExpression("/", fmt.Sprintf("http://192.168.1.11:%s", getEnv("PORT", "9999")))
-
+	route := NewRouteExpression(fmt.Sprintf("http://%s:%s/redirect",
+		getEnv("HOST", "localhost"), getEnv("PORT", "9999")))
 	rootRule := NewRedirectTargetRule( "https://www.dr.dk/", 301 )
 	rootRule.AddTargetRule(NewProxyTargetRule("https://www.tuxand.me", 4)) // this is meaningless.
 	route.AddTargetRule(rootRule)
-
 	routeexpressions.Insert (*route)
 
 
 	/* Functionality testing */
-	cacheRoute := NewRouteExpression("/cache", fmt.Sprintf("http://%s:%s", getEnv("HOST", "localhost"), getEnv("PORT", "9999")))
+	cacheRoute := NewRouteExpression(fmt.Sprintf("http://%s:%s/cache", getEnv("HOST", "localhost"), getEnv("PORT", "9999")))
 	backendCacheRule := NewCacheTargetRule( "http://www.tuxand.me" )
 	cacheRoute.AddTargetRule(backendCacheRule )
 	routeexpressions.Insert (*cacheRoute)
 
 	/* Functionality testing */
-	contentRoute := NewRouteExpression("/content", fmt.Sprintf("http://%s:%s", getEnv("HOST", "localhost"), getEnv("PORT", "9999")))
+	contentRoute := NewRouteExpression(fmt.Sprintf("http://%s:%s/content", getEnv("HOST", "localhost"), getEnv("PORT", "9999")))
 	contentCacheRule := NewContentTargetRule( "http://www.microscopy-uk.org.uk/mag/indexmag.html" )
 	contentRoute.AddTargetRule(contentCacheRule)
 	routeexpressions.Insert (*contentRoute)
 
 	// Start webserver, capture apps and use that.
 	http.HandleFunc("/", EnsureHTTPProtocolHeaders(
-//				NCSALogger(
+				NCSALogger(
 					func( res http.ResponseWriter, req *http.Request) {
-
-		// Make sure, we have a protocol, matching our listener proto.
-		req.URL.Scheme = "http"
 
 		// Next, run though apps, and find a exact-match.
 		rs, err := routeexpressions.FindTargetGroupByRouteExpression(req)
@@ -435,8 +421,7 @@ func main() {
 		rs.ServeHTTP(res, req)
 
 		return
-	}))
-//)
+	})))
 
 	err := http.ListenAndServe(fmt.Sprintf(":%s", getEnv("PORT", "9999")), nil)
 	log.Fatal(err)
