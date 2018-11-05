@@ -392,13 +392,13 @@ func main() {
 
 
 	/* Functionality testing */
-	cacheRoute := NewRouteExpression("/cache", fmt.Sprintf("http://192.168.1.11:%s", getEnv("PORT", "9999")))
+	cacheRoute := NewRouteExpression("/cache", fmt.Sprintf("http://%s:%s", getEnv("HOST", "localhost"), getEnv("PORT", "9999")))
 	backendCacheRule := NewCacheTargetRule( "http://www.tuxand.me" )
 	cacheRoute.AddTargetRule(backendCacheRule )
 	routeexpressions.Insert (*cacheRoute)
 
 	/* Functionality testing */
-	contentRoute := NewRouteExpression("/content", fmt.Sprintf("http://192.168.1.11:%s", getEnv("PORT", "9999")))
+	contentRoute := NewRouteExpression("/content", fmt.Sprintf("http://%s:%s", getEnv("HOST", "localhost"), getEnv("PORT", "9999")))
 	contentCacheRule := NewContentTargetRule( "http://www.microscopy-uk.org.uk/mag/indexmag.html" )
 	contentRoute.AddTargetRule(contentCacheRule)
 	routeexpressions.Insert (*contentRoute)
