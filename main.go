@@ -109,45 +109,67 @@ func (p* ProxyTargetRule) ServeHTTP( res http.ResponseWriter, req *http.Request)
 
 type ContentTargetRule struct {
 	Content string
-	Headers []string
+	header http.Header
 	StatusCode int
 	Next* Target
 }
 
+func (c* ContentTargetRule) Header() http.Header {
+	return c.header
+}
+
 func NewContentCompleteTargetRule(Content string, Headers []string, StatusCode int) *ContentTargetRule {
-	return &ContentTargetRule{Content: Content,
-		Headers : Headers,
+	t := &ContentTargetRule{Content: Content,
+		header : make(map[string][]string),
 		StatusCode: StatusCode}
+
+	for _, element := range Headers {
+		s := strings.SplitN(element,":", 2)
+		t.Header().Add(s[0], s[1])
+	}
+
+	t.Header().Add("X-CacheRule","TRUE")
+	return t
 }
 
 
 func NewContentTargetRule(Content string) *ContentTargetRule {
-	return &ContentTargetRule{Content: Content,
-		Headers : []string{},
+	t := &ContentTargetRule{Content: Content,
+		header : make(map[string][]string),
 		StatusCode: 200}
+
+	t.Header().Add("X-CacheRule","TRUE")
+
+	return t
 }
 
 func NewRedirectTargetRule(Destination string, Redirect int) *ContentTargetRule {
-	return &ContentTargetRule{Content: fmt.Sprintf("Content Moved HTTP %d", Redirect),
-	Headers : []string{ fmt.Sprintf("Location: %s", Destination) },
+	t := &ContentTargetRule{Content: fmt.Sprintf("Content Moved HTTP %d", Redirect),
+		header : make(map[string][]string),
 		StatusCode: Redirect }
+
+	t.Header().Add("X-CacheRule","TRUE")
+	t.Header().Add("Location", Destination)
+
+	return t
 }
 
 func (p* ContentTargetRule) ServeHTTP( res http.ResponseWriter, req *http.Request)  {
 
-	for _, element := range p.Headers {
-		s := strings.SplitN(element,":", 2)
-		res.Header().Add(s[0], s[1])
+	// Copy headers (http.headers support) - Migrate, to this.
+	for k, v := range p.Header() {
+		res.Header()[k] = v
 	}
+
 	res.WriteHeader(p.StatusCode)
 	res.Write([]byte(p.Content))
 }
 
 type CacheTargetRule struct {
-	Next Target
-	Cache* bufferedResponseWriter
+	Cache *bufferedResponseWriter
 	IsNew bool
 	sync.RWMutex
+	Next *Target
 }
 
 func NewCacheTargetRule(Destination string) *CacheTargetRule {
@@ -165,8 +187,9 @@ func (c* CacheTargetRule) ServeHTTP ( res http.ResponseWriter, req *http.Request
 	c.RUnlock()
 			c.Lock()
 			interceptWriter := &bufferedResponseWriter{res, 0, 0, bytes.NewBuffer(nil) }
+			(*c.Next).ServeHTTP(interceptWriter, req)
+
 			interceptWriter.Header().Add("X-Cache-Hit", "HIT")
-			c.Next.ServeHTTP(interceptWriter, req)
 			c.Cache = interceptWriter
 			c.IsNew = false
 			c.Unlock()
@@ -179,10 +202,6 @@ func (c* CacheTargetRule) ServeHTTP ( res http.ResponseWriter, req *http.Request
 	res.WriteHeader(c.Cache.HTTPStatus)
 	res.Write(c.Cache.buf.Bytes())
 	c.RUnlock()
-}
-
-func (t* CacheTargetRule) AddTargetRule(rule Target) {
-	t.Next = rule
 }
 
 type RouteExpression struct {
@@ -205,6 +224,9 @@ func (t* ProxyTargetRule) AddTargetRule(rule Target) {
 	t.Next = &rule
 }
 
+func (t* CacheTargetRule) AddTargetRule(rule Target) {
+	t.Next = &rule
+}
 
 
 func NewRouteExpression(Path string, Host string ) *RouteExpression {

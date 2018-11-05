@@ -112,6 +112,7 @@ func TestRedirectTargetRule(t *testing.T) {
 
 	t.Logf("Status: %d\n", resp.StatusCode)
 	t.Logf("Content-Type: %s\n", resp.Header.Get("Content-Type"))
+	t.Logf("X-CacheRule: %s\n", resp.Header.Get("X-CacheRule"))
 	t.Logf("Body: %s\n", string(body))
 }
 
@@ -121,7 +122,7 @@ func TestCacheTargetRule(t *testing.T) {
 
 	routeexpressions := new(List)
 	route := NewRouteExpression("/cache", "http://localhost")
-	route.AddTargetRule(NewCacheTargetRule("https://dr.dk"))
+	route.AddTargetRule(NewCacheTargetRule("http://www.tuxand.me"))
 	routeexpressions.Insert (*route)
 
 	t.Logf("* Testing Rule chain, Path: %s, Host: %s\n", req.URL.Path, fmt.Sprintf("%s://%s", req.URL.Scheme, req.URL.Host))
