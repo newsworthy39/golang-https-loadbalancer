@@ -1,27 +1,27 @@
 package main
 
 import (
-	"sync"
 	"bytes"
 	"errors"
-//	"encoding/json"
+	"sync"
+	//	"encoding/json"
 	"fmt"
-//	zmq "github.com/pebbe/zmq4"
+	//	zmq "github.com/pebbe/zmq4"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
-//	"regexp"
+	//	"regexp"
+	"flag"
 	"strings"
 	"time"
-    "flag"
 )
 
 type bufferedResponseWriter struct {
-    http.ResponseWriter // embed struct
-    HTTPStatus   int
-    ResponseSize int
-    buf *bytes.Buffer
+	http.ResponseWriter // embed struct
+	HTTPStatus          int
+	ResponseSize        int
+	buf                 *bytes.Buffer
 }
 
 func (w *bufferedResponseWriter) WriteHeader(status int) {
@@ -46,33 +46,33 @@ func (w *bufferedResponseWriter) Write(b []byte) (int, error) {
 		w.HTTPStatus = 200
 	}
 	w.ResponseSize = len(b)
-        return w.buf.Write(b)
+	return w.buf.Write(b)
 }
 
 type Target interface {
-	ServeHTTP( res http.ResponseWriter, req *http.Request)
+	ServeHTTP(res http.ResponseWriter, req *http.Request)
 	AddTargetRule(Target Target)
 }
 
 type ProxyTargetRule struct {
-	Target string
-	transport [64]*http.Transport
-	MaxBackendConnections int
+	Target                   string
+	transport                [64]*http.Transport
+	MaxBackendConnections    int
 	activeBackendConnections int
-	Next* Target
+	Next                     *Target
 }
 
 func NewProxyTargetRule(Destination string, MaxBackends int) *ProxyTargetRule {
 	return &ProxyTargetRule{Target: Destination,
-		MaxBackendConnections : MaxBackends,}
+		MaxBackendConnections: MaxBackends}
 }
 
-func (p* ProxyTargetRule) ServeHTTP( res http.ResponseWriter, req *http.Request)  {
+func (p *ProxyTargetRule) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	if p.transport[p.activeBackendConnections] == nil {
 		p.transport[p.activeBackendConnections] = &http.Transport{
 			MaxIdleConns:       10,
 			IdleConnTimeout:    30 * time.Second,
-			DisableCompression: true }
+			DisableCompression: true}
 	}
 
 	// Setup client.
@@ -89,8 +89,8 @@ func (p* ProxyTargetRule) ServeHTTP( res http.ResponseWriter, req *http.Request)
 	defer resp.Body.Close()
 
 	for name, values := range resp.Header {
-                res.Header()[name] = values
-        }
+		res.Header()[name] = values
+	}
 
 	body, err := ioutil.ReadAll(resp.Body)
 	res.WriteHeader(resp.StatusCode)
@@ -102,52 +102,51 @@ func (p* ProxyTargetRule) ServeHTTP( res http.ResponseWriter, req *http.Request)
 		p.activeBackendConnections = 0
 	}
 
-	if (p.Next != nil) {
+	if p.Next != nil {
 		(*p.Next).ServeHTTP(res, req)
 	}
 }
 
 type ContentTargetRule struct {
-	Content string
-	header http.Header
+	Content    string
+	header     http.Header
 	StatusCode int
-	Next* Target
+	Next       *Target
 }
 
-func (c* ContentTargetRule) Header() http.Header {
+func (c *ContentTargetRule) Header() http.Header {
 	return c.header
 }
 
 func NewContentCompleteTargetRule(Content string, Headers []string, StatusCode int) *ContentTargetRule {
 	t := &ContentTargetRule{Content: Content,
-		header : make(map[string][]string),
+		header:     make(map[string][]string),
 		StatusCode: StatusCode}
 
 	for _, element := range Headers {
-		s := strings.SplitN(element,":", 2)
+		s := strings.SplitN(element, ":", 2)
 		t.Header().Add(s[0], s[1])
 	}
 	return t
 }
 
-
 func NewContentTargetRule(Content string) *ContentTargetRule {
 	t := &ContentTargetRule{Content: Content,
-		header : make(map[string][]string),
+		header:     make(map[string][]string),
 		StatusCode: 200}
 	return t
 }
 
 func NewRedirectTargetRule(Destination string, Redirect int) *ContentTargetRule {
 	t := &ContentTargetRule{Content: fmt.Sprintf("Content Moved HTTP %d", Redirect),
-		header : make(map[string][]string),
-		StatusCode: Redirect }
+		header:     make(map[string][]string),
+		StatusCode: Redirect}
 	t.Header().Add("Location", Destination)
 
 	return t
 }
 
-func (p* ContentTargetRule) ServeHTTP( res http.ResponseWriter, req *http.Request)  {
+func (p *ContentTargetRule) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 
 	// Copy headers (http.headers support) - Migrate, to this.
 	for k, v := range p.Header() {
@@ -167,26 +166,26 @@ type CacheTargetRule struct {
 
 func NewCacheTargetRule(Destination string) *CacheTargetRule {
 	target := NewProxyTargetRule(Destination, 10)
-	rule   := CacheTargetRule{ IsNew: true }
+	rule := CacheTargetRule{IsNew: true}
 	rule.AddTargetRule(target)
 	return &rule
 }
 
-func (c* CacheTargetRule) ServeHTTP ( res http.ResponseWriter, req *http.Request) {
+func (c *CacheTargetRule) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	// We have multiple critical regions, every access to shared resource is
 	// rlock'ed or lock'ed.
 	// Setup read-locking, using double-locking.
 	c.RLock()
 	if c.IsNew {
-	c.RUnlock()
-			c.Lock()
-			interceptWriter := &bufferedResponseWriter{res, 0, 0, bytes.NewBuffer(nil) }
-			(*c.Next).ServeHTTP(interceptWriter, req)
+		c.RUnlock()
+		c.Lock()
+		interceptWriter := &bufferedResponseWriter{res, 0, 0, bytes.NewBuffer(nil)}
+		(*c.Next).ServeHTTP(interceptWriter, req)
 
-			interceptWriter.Header().Add("X-Cache-Hit", "HIT")
-			c.Cache = interceptWriter
-			c.IsNew = false
-			c.Unlock()
+		interceptWriter.Header().Add("X-Cache-Hit", "HIT")
+		c.Cache = interceptWriter
+		c.IsNew = false
+		c.Unlock()
 	}
 
 	// Read-lock for copying.
@@ -200,27 +199,26 @@ func (c* CacheTargetRule) ServeHTTP ( res http.ResponseWriter, req *http.Request
 }
 
 type RouteExpression struct {
-	Path string
-        StatusCodes []int64
-        AccessTime  int64
-	Next *Target
+	Path        string
+	StatusCodes []int64
+	AccessTime  int64
+	Next        *Target
 }
 
-func (r* RouteExpression) AddTargetRule(rule Target) {
+func (r *RouteExpression) AddTargetRule(rule Target) {
 	r.Next = &rule
 }
 
-func (t* ContentTargetRule) AddTargetRule(rule Target) {
+func (t *ContentTargetRule) AddTargetRule(rule Target) {
 	t.Next = &rule
 }
-func (t* ProxyTargetRule) AddTargetRule(rule Target) {
-	t.Next = &rule
-}
-
-func (t* CacheTargetRule) AddTargetRule(rule Target) {
+func (t *ProxyTargetRule) AddTargetRule(rule Target) {
 	t.Next = &rule
 }
 
+func (t *CacheTargetRule) AddTargetRule(rule Target) {
+	t.Next = &rule
+}
 
 func NewRouteExpression(Path string) *RouteExpression {
 	route := new(RouteExpression)
@@ -228,8 +226,8 @@ func NewRouteExpression(Path string) *RouteExpression {
 	return route
 }
 
-func (r* RouteExpression) ServeHTTP( res http.ResponseWriter, req *http.Request) {
-	(*r.Next).ServeHTTP(res,req)
+func (r *RouteExpression) ServeHTTP(res http.ResponseWriter, req *http.Request) {
+	(*r.Next).ServeHTTP(res, req)
 }
 
 type Node struct {
@@ -310,18 +308,17 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-
-func (l* List) FindTargetGroupByRouteExpression(req *http.Request) (RouteExpression, error) {
-        list := l.head
-        for list != nil {
+func (l *List) FindTargetGroupByRouteExpression(req *http.Request) (RouteExpression, error) {
+	list := l.head
+	for list != nil {
 		routeExpression := list.key.(RouteExpression)
 		// http(s)://somedomain.com:$PORT/Path == http(s)://somedomain.com:$PORT/Path
-		if (strings.HasPrefix(fmt.Sprintf("%s://%s%s", req.URL.Scheme, req.Host, req.URL.Path),
-				routeExpression.Path)) {
+		if strings.HasPrefix(fmt.Sprintf("%s://%s%s", req.URL.Scheme, req.Host, req.URL.Path),
+			routeExpression.Path) {
 			return routeExpression, nil
 		}
-                list = list.next
-        }
+		list = list.next
+	}
 	return RouteExpression{}, errors.New("FindTargetGRoupByRouteExpression: No routes found")
 }
 
@@ -329,31 +326,31 @@ func (l* List) FindTargetGroupByRouteExpression(req *http.Request) (RouteExpress
 func NCSALogger(next http.HandlerFunc, logToStdout bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 
-        if logToStdout {
-		t := time.Now()
-		interceptWriter := bufferedResponseWriter{w, 0, 0, bytes.NewBuffer(nil) }
+		if logToStdout {
+			t := time.Now()
+			interceptWriter := bufferedResponseWriter{w, 0, 0, bytes.NewBuffer(nil)}
 
-		next.ServeHTTP(&interceptWriter, r)
+			next.ServeHTTP(&interceptWriter, r)
 
-		log.Printf("%s - %s - - %s \"%s %s %s\" %d %d %s %dus\n",
-			r.URL.Scheme,
-			r.RemoteAddr,
-			t.Format("02/Jan/2006:15:04:05 -0700"),
-			r.Method,
-			r.URL.Path,
-			r.Proto,
-			interceptWriter.HTTPStatus,
-			interceptWriter.ResponseSize,
-			r.UserAgent(),
-			time.Since(t),
-		)
+			log.Printf("%s - %s - - %s \"%s %s %s\" %d %d %s %dus\n",
+				r.URL.Scheme,
+				r.RemoteAddr,
+				t.Format("02/Jan/2006:15:04:05 -0700"),
+				r.Method,
+				r.URL.Path,
+				r.Proto,
+				interceptWriter.HTTPStatus,
+				interceptWriter.ResponseSize,
+				r.UserAgent(),
+				time.Since(t),
+			)
 
-		// BufferedResponseWriters, require us to manually, call Flush, 
-		// This emits, the recorded status and body.
-		interceptWriter.Flush()
-        } else {
-            next.ServeHTTP(w,r)
-        }
+			// BufferedResponseWriters, require us to manually, call Flush,
+			// This emits, the recorded status and body.
+			interceptWriter.Flush()
+		} else {
+			next.ServeHTTP(w, r)
+		}
 	}
 }
 
@@ -368,11 +365,11 @@ func EnsureHTTPProtocolHeaders(next http.HandlerFunc) http.HandlerFunc {
 
 func main() {
 
-    // we will need some args, going here.
-    logToStdout := flag.Bool("log", false, "Log to stdout")
-    port := flag.Int("port", 9000, "Port to listen to")
+	// we will need some args, going here.
+	logToStdout := flag.Bool("log", false, "Log to stdout")
+	port := flag.Int("port", 9000, "Port to listen to")
 
-    flag.Parse()
+	flag.Parse()
 
 	// Create root-node in graph.
 	routeexpressions := new(List)
@@ -380,54 +377,53 @@ func main() {
 	/* Functionality testing */
 	route := NewRouteExpression(fmt.Sprintf("http://%s:%d/redirect",
 		getEnv("HOST", "localhost"), *port))
-	rootRule := NewRedirectTargetRule( "https://www.dr.dk/", 301 )
+	rootRule := NewRedirectTargetRule("https://www.dr.dk/", 301)
 	rootRule.AddTargetRule(NewProxyTargetRule("https://www.tuxand.me", 4)) // this is meaningless.
 	route.AddTargetRule(rootRule)
-	routeexpressions.Insert (*route)
-
+	routeexpressions.Insert(*route)
 
 	/* Functionality testing */
 	cacheRoute := NewRouteExpression(fmt.Sprintf("http://%s:%d/cache", getEnv("HOST", "localhost"), *port))
-	backendCacheRule := NewCacheTargetRule( "http://www.tuxand.me" )
-	cacheRoute.AddTargetRule(backendCacheRule )
-	routeexpressions.Insert (*cacheRoute)
+	backendCacheRule := NewCacheTargetRule("http://www.tuxand.me")
+	cacheRoute.AddTargetRule(backendCacheRule)
+	routeexpressions.Insert(*cacheRoute)
 
 	/* Functionality testing */
 	contentRoute := NewRouteExpression(fmt.Sprintf("http://%s:%d/content", getEnv("HOST", "localhost"), *port))
-	contentCacheRule := NewContentTargetRule( "http://www.microscopy-uk.org.uk/mag/indexmag.html" )
+	contentCacheRule := NewContentTargetRule("http://www.microscopy-uk.org.uk/mag/indexmag.html")
 	contentRoute.AddTargetRule(contentCacheRule)
-	routeexpressions.Insert (*contentRoute)
+	routeexpressions.Insert(*contentRoute)
 
 	// Start webserver, capture apps and use that.
 	http.HandleFunc("/", EnsureHTTPProtocolHeaders(
-				NCSALogger(
-					func( res http.ResponseWriter, req *http.Request) {
+		NCSALogger(
+			func(res http.ResponseWriter, req *http.Request) {
 
-		// Next, run though apps, and find a exact-match.
-		rs, err := routeexpressions.FindTargetGroupByRouteExpression(req)
-		if err != nil {
-			// Deliver, not found, here is a problem to do sort-of-a-root-accounting.
-			res.WriteHeader(http.StatusNotFound)
-			res.Write([]byte(fmt.Sprintf("Not found (%s!).", req.URL.Path[1:])))
-			// Error to flush the io-streams
-			// http.Error(res,
-			//	fmt.Sprintf("This loadbalancer has not yet been configured."),
-			//	http.StatusInternalServerError)
-			return
+				// Next, run though apps, and find a exact-match.
+				rs, err := routeexpressions.FindTargetGroupByRouteExpression(req)
+				if err != nil {
+					// Deliver, not found, here is a problem to do sort-of-a-root-accounting.
+					res.WriteHeader(http.StatusNotFound)
+					res.Write([]byte(fmt.Sprintf("Not found (%s!).", req.URL.Path[1:])))
+					// Error to flush the io-streams
+					// http.Error(res,
+					//	fmt.Sprintf("This loadbalancer has not yet been configured."),
+					//	http.StatusInternalServerError)
+					return
 
-		}
+				}
 
-		// pseudo-code
-		// RouteExpression would link to a target-group. Send a go-func, there.
-		// Target-groups can be a number of things.
-		// * Proxies to backend-ssystems
-		// * Redirect-applications (ie, http->https redirects, )
-		// * Publisher-producer system (ie, uploaded error-pages etc)
-		// * Proxy-cache event-based notification systems
-		rs.ServeHTTP(res, req)
+				// pseudo-code
+				// RouteExpression would link to a target-group. Send a go-func, there.
+				// Target-groups can be a number of things.
+				// * Proxies to backend-ssystems
+				// * Redirect-applications (ie, http->https redirects, )
+				// * Publisher-producer system (ie, uploaded error-pages etc)
+				// * Proxy-cache event-based notification systems
+				rs.ServeHTTP(res, req)
 
-		return
-	}, *logToStdout )))
+				return
+			}, *logToStdout)))
 
 	err := http.ListenAndServe(fmt.Sprintf(":%d", *port), nil)
 	log.Fatal(err)
