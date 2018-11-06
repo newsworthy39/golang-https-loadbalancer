@@ -141,13 +141,14 @@ func (p *ProxyTargetRule) ServeHTTP(res http.ResponseWriter, req *http.Request) 
 	fmt.Printf("ProxyTargetRule(): req is %s, org.Host: %s, scheme: %s, full: %s://%s%s\n", req.URL.Path, org.Host, org.Scheme, org.Scheme, org.Host, req.URL.Path)
 
 	breq, err := http.NewRequest("GET", fmt.Sprintf("%s://%s%s", org.Scheme, org.Host, req.URL.Path), nil)
-	//breq.URL.Host = req.URL.Host
-	breq.URL.Scheme = req.URL.Scheme
+	// breq.URL.Host = req.URL.Host
+	// breq.URL.Scheme = req.URL.Scheme
 	breq.Header.Set("X-Forwarded-Host", req.Header.Get("Host"))
 
 	// We allways, append our own "IP" or DNS-name. This function is mmeoized internally.
 	host, _ := externalIP()
 	breq.Header.Set("X-Forwarded-For", fmt.Sprint("%s, %s", req.Header.Get("X-Forwarded-For"), host))
+	breq.Header.Set("X-Forwarded-Proto", req.URL.Scheme)
 
 	resp, err := client.Do(breq)
 
