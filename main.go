@@ -173,7 +173,8 @@ func NewCacheTargetRule(Destination string) *CacheTargetRule {
 }
 
 func (c* CacheTargetRule) ServeHTTP ( res http.ResponseWriter, req *http.Request) {
-
+	// We have multiple critical regions, every access to shared resource is
+	// rlock'ed or lock'ed.
 	// Setup read-locking, using double-locking.
 	c.RLock()
 	if c.IsNew {
@@ -188,6 +189,7 @@ func (c* CacheTargetRule) ServeHTTP ( res http.ResponseWriter, req *http.Request
 			c.Unlock()
 	}
 
+	// Read-lock for copying.
 	c.RLock()
 	for name, values := range c.Cache.Header() {
 		res.Header()[name] = values
