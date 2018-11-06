@@ -14,6 +14,7 @@ import (
 //	"regexp"
 	"strings"
 	"time"
+    "flag"
 )
 
 type bufferedResponseWriter struct {
@@ -323,9 +324,10 @@ func (l* List) FindTargetGroupByRouteExpression(req *http.Request) (RouteExpress
 }
 
 // NCSA Logging Format to log.
-func NCSALogger(next http.HandlerFunc) http.HandlerFunc {
+func NCSALogger(next http.HandlerFunc, logToStdout bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 
+        if logToStdout {
 		t := time.Now()
 		interceptWriter := bufferedResponseWriter{w, 0, 0, bytes.NewBuffer(nil) }
 
@@ -347,6 +349,9 @@ func NCSALogger(next http.HandlerFunc) http.HandlerFunc {
 		// BufferedResponseWriters, require us to manually, call Flush, 
 		// This emits, the recorded status and body.
 		interceptWriter.Flush()
+        } else {
+            next.ServeHTTP(w,r)
+        }
 	}
 }
 
@@ -361,12 +366,18 @@ func EnsureHTTPProtocolHeaders(next http.HandlerFunc) http.HandlerFunc {
 
 func main() {
 
-	// We set, this to -1, thus default is 0.
+    // we will need some args, going here.
+    logToStdout := flag.Bool("log", false, "Log to stdout")
+    port := flag.Int("port", 9000, "Port to listen to")
+
+    flag.Parse()
+
+	// Create root-node in graph.
 	routeexpressions := new(List)
 
 	/* Functionality testing */
-	route := NewRouteExpression(fmt.Sprintf("http://%s:%s/redirect",
-		getEnv("HOST", "localhost"), getEnv("PORT", "9999")))
+	route := NewRouteExpression(fmt.Sprintf("http://%s:%d/redirect",
+		getEnv("HOST", "localhost"), *port))
 	rootRule := NewRedirectTargetRule( "https://www.dr.dk/", 301 )
 	rootRule.AddTargetRule(NewProxyTargetRule("https://www.tuxand.me", 4)) // this is meaningless.
 	route.AddTargetRule(rootRule)
@@ -374,13 +385,13 @@ func main() {
 
 
 	/* Functionality testing */
-	cacheRoute := NewRouteExpression(fmt.Sprintf("http://%s:%s/cache", getEnv("HOST", "localhost"), getEnv("PORT", "9999")))
+	cacheRoute := NewRouteExpression(fmt.Sprintf("http://%s:%d/cache", getEnv("HOST", "localhost"), *port))
 	backendCacheRule := NewCacheTargetRule( "http://www.tuxand.me" )
 	cacheRoute.AddTargetRule(backendCacheRule )
 	routeexpressions.Insert (*cacheRoute)
 
 	/* Functionality testing */
-	contentRoute := NewRouteExpression(fmt.Sprintf("http://%s:%s/content", getEnv("HOST", "localhost"), getEnv("PORT", "9999")))
+	contentRoute := NewRouteExpression(fmt.Sprintf("http://%s:%d/content", getEnv("HOST", "localhost"), *port))
 	contentCacheRule := NewContentTargetRule( "http://www.microscopy-uk.org.uk/mag/indexmag.html" )
 	contentRoute.AddTargetRule(contentCacheRule)
 	routeexpressions.Insert (*contentRoute)
@@ -414,8 +425,8 @@ func main() {
 		rs.ServeHTTP(res, req)
 
 		return
-	})))
+	}, *logToStdout )))
 
-	err := http.ListenAndServe(fmt.Sprintf(":%s", getEnv("PORT", "9999")), nil)
+	err := http.ListenAndServe(fmt.Sprintf(":%d", *port), nil)
 	log.Fatal(err)
 }
