@@ -100,7 +100,6 @@ func (w *bufferedResponseWriter) Write(b []byte) (int, error) {
 // pretty much is 1-1 w/ this interface.
 type Target interface {
 	ServeHTTP(res http.ResponseWriter, req *http.Request)
-	AddTargetRule(Target Target)
 }
 
 type ProxyTargetRule struct {
@@ -220,6 +219,12 @@ func (p *ContentTargetRule) ServeHTTP(res http.ResponseWriter, req *http.Request
 
 	res.WriteHeader(p.StatusCode)
 	res.Write([]byte(p.Content))
+}
+
+// PropositionTargets allow branching.
+type PropositionTargetRule struct {
+	Left *Target
+	Right *Target
 }
 
 type CacheTargetRule struct {
@@ -454,6 +459,9 @@ func main() {
 
 	/* Functionality testing */
 	cacheRoute := NewRouteExpression(fmt.Sprintf("http://%s:%d/cache", host, *port))
+	// TODO: Offer af Mix-In, to NewCacheTargetRule,
+	// using different cache-backends, either
+	// memcache-backends, http-slave etc
 	backendCacheRule := NewCacheTargetRule("http://www.tuxand.me")
 	cacheRoute.AddTargetRule(backendCacheRule)
 	routeexpressions.Insert(*cacheRoute)
