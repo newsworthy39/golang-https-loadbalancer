@@ -13,9 +13,56 @@ import (
 	"os"
 	//	"regexp"
 	"flag"
+	"github.com/BenLubar/memoize"
+	"net"
+	"net/url"
 	"strings"
 	"time"
 )
+
+// externalIP
+// Returns externalIP if possible, or err.
+// Memoize this function, to prevent excessive iterating.
+func externalIP() (string, error) {
+	var _externalIP = func() (string, error) {
+		ifaces, err := net.Interfaces()
+		if err != nil {
+			return "", err
+		}
+		for _, iface := range ifaces {
+			if iface.Flags&net.FlagUp == 0 {
+				continue // interface down
+			}
+			if iface.Flags&net.FlagLoopback != 0 {
+				continue // loopback interface
+			}
+			addrs, err := iface.Addrs()
+			if err != nil {
+				return "", err
+			}
+			for _, addr := range addrs {
+				var ip net.IP
+				switch v := addr.(type) {
+				case *net.IPNet:
+					ip = v.IP
+				case *net.IPAddr:
+					ip = v.IP
+				}
+				if ip == nil || ip.IsLoopback() {
+					continue
+				}
+				ip = ip.To4()
+				if ip == nil {
+					continue // not an ipv4 address
+				}
+				return ip.String(), nil
+			}
+		}
+		return "", errors.New("are you connected to the network?")
+	}
+	_externalIP = memoize.Memoize(_externalIP).(func() (string, error))
+	return _externalIP()
+}
 
 type bufferedResponseWriter struct {
 	http.ResponseWriter // embed struct
@@ -49,6 +96,8 @@ func (w *bufferedResponseWriter) Write(b []byte) (int, error) {
 	return w.buf.Write(b)
 }
 
+// TODO: Replace this with a http.Handlerfunc, as it
+// pretty much is 1-1 w/ this interface.
 type Target interface {
 	ServeHTTP(res http.ResponseWriter, req *http.Request)
 	AddTargetRule(Target Target)
@@ -72,17 +121,36 @@ func (p *ProxyTargetRule) ServeHTTP(res http.ResponseWriter, req *http.Request) 
 		p.transport[p.activeBackendConnections] = &http.Transport{
 			MaxIdleConns:       10,
 			IdleConnTimeout:    30 * time.Second,
-			DisableCompression: true}
+			DisableCompression: false}
 	}
 
-	// Setup client.
+	// Setup client, to *not* follow redirects, thanks to this hack.
 	client := &http.Client{
 		Transport: p.transport[p.activeBackendConnections],
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
-	resp, err := client.Get(p.Target)
+
+	// p.Target = http://something:port/maybethis
+	org, er := url.Parse(p.Target)
+	if er != nil {
+		fmt.Printf("Error parsing Target in ProxyTargetRule, %s, err: %s", p.Target, er)
+	}
+	// We use the original backend-stuff, but bake our request into it.
+	fmt.Printf("ProxyTargetRule(): req is %s, org.Host: %s, scheme: %s, full: %s://%s%s\n", req.URL.Path, org.Host, org.Scheme, org.Scheme, org.Host, req.URL.Path)
+
+	breq, err := http.NewRequest("GET", fmt.Sprintf("%s://%s%s", org.Scheme, org.Host, req.URL.Path), nil)
+	//breq.URL.Host = req.URL.Host
+	breq.URL.Scheme = req.URL.Scheme
+	breq.Header.Set("X-Forwarded-Host", req.Header.Get("Host"))
+
+	// We allways, append our own "IP" or DNS-name. This function is mmeoized internally.
+	host, _ := externalIP()
+	breq.Header.Set("X-Forwarded-For", fmt.Sprint("%s, %s", req.Header.Get("X-Forwarded-For"), host))
+
+	resp, err := client.Do(breq)
+
 	if err != nil {
 		// handle error
 	}
@@ -365,34 +433,45 @@ func EnsureHTTPProtocolHeaders(next http.HandlerFunc) http.HandlerFunc {
 
 func main() {
 
+	host, err := externalIP()
+	if err != nil {
+		fmt.Println(err)
+	}
+
 	// we will need some args, going here.
 	logToStdout := flag.Bool("log", false, "Log to stdout")
 	port := flag.Int("port", 9000, "Port to listen to")
 
 	flag.Parse()
 
+	fmt.Printf("Using %s:%d.\n", host, *port)
+
 	// Create root-node in graph.
 	routeexpressions := new(List)
 
 	/* Functionality testing */
-	route := NewRouteExpression(fmt.Sprintf("http://%s:%d/redirect",
-		getEnv("HOST", "localhost"), *port))
+	route := NewRouteExpression(fmt.Sprintf("http://%s:%d/redirect", host, *port))
 	rootRule := NewRedirectTargetRule("https://www.dr.dk/", 301)
-	rootRule.AddTargetRule(NewProxyTargetRule("https://www.tuxand.me", 4)) // this is meaningless.
 	route.AddTargetRule(rootRule)
 	routeexpressions.Insert(*route)
 
 	/* Functionality testing */
-	cacheRoute := NewRouteExpression(fmt.Sprintf("http://%s:%d/cache", getEnv("HOST", "localhost"), *port))
+	cacheRoute := NewRouteExpression(fmt.Sprintf("http://%s:%d/cache", host, *port))
 	backendCacheRule := NewCacheTargetRule("http://www.tuxand.me")
 	cacheRoute.AddTargetRule(backendCacheRule)
 	routeexpressions.Insert(*cacheRoute)
 
 	/* Functionality testing */
-	contentRoute := NewRouteExpression(fmt.Sprintf("http://%s:%d/content", getEnv("HOST", "localhost"), *port))
+	contentRoute := NewRouteExpression(fmt.Sprintf("http://%s:%d/content", host, *port))
 	contentCacheRule := NewContentTargetRule("http://www.microscopy-uk.org.uk/mag/indexmag.html")
 	contentRoute.AddTargetRule(contentCacheRule)
 	routeexpressions.Insert(*contentRoute)
+
+	/* Functionality testing */
+	proxyRoute := NewRouteExpression(fmt.Sprintf("http://%s:%d/api", host, *port))
+	proxyRule := NewProxyTargetRule("https://www.tuxand.me", 10)
+	proxyRoute.AddTargetRule(proxyRule)
+	routeexpressions.Insert(*proxyRoute)
 
 	// Start webserver, capture apps and use that.
 	http.HandleFunc("/", EnsureHTTPProtocolHeaders(
@@ -425,6 +504,6 @@ func main() {
 				return
 			}, *logToStdout)))
 
-	err := http.ListenAndServe(fmt.Sprintf(":%d", *port), nil)
+	err = http.ListenAndServe(fmt.Sprintf(":%d", *port), nil)
 	log.Fatal(err)
 }
