@@ -96,18 +96,12 @@ func (w *bufferedResponseWriter) Write(b []byte) (int, error) {
 	return w.buf.Write(b)
 }
 
-// TODO: Replace this with a http.Handlerfunc, as it
-// pretty much is 1-1 w/ this interface.
-type Target interface {
-	ServeHTTP(res http.ResponseWriter, req *http.Request)
-}
-
 type ProxyTargetRule struct {
 	Target                   string
 	transport                [64]*http.Transport
 	MaxBackendConnections    int
 	activeBackendConnections int
-	Next                     *Target
+	Next                     *http.Handler
 }
 
 func NewProxyTargetRule(Destination string, MaxBackends int) *ProxyTargetRule {
@@ -142,7 +136,7 @@ func (p *ProxyTargetRule) ServeHTTP(res http.ResponseWriter, req *http.Request) 
 
 	breq, err := http.NewRequest("GET", fmt.Sprintf("%s://%s%s", org.Scheme, org.Host, req.URL.Path), nil)
 	breq.Header.Set("X-Forwarded-Host", req.Header.Get("Host"))
-	breq.Header.Set("X-Forwarded-For", fmt.Sprint("%s, %s", req.Header.Get("X-Forwarded-For"), host))
+	breq.Header.Set("X-Forwarded-For", fmt.Sprintf("%s, %s", req.Header.Get("X-Forwarded-For"), host))
 	breq.Header.Set("X-Forwarded-Proto", req.URL.Scheme)
 
 	resp, err := client.Do(breq)
@@ -175,7 +169,7 @@ type ContentTargetRule struct {
 	Content    string
 	header     http.Header
 	StatusCode int
-	Next       *Target
+	Next       *http.Handler
 }
 
 func (c *ContentTargetRule) Header() http.Header {
@@ -223,15 +217,15 @@ func (p *ContentTargetRule) ServeHTTP(res http.ResponseWriter, req *http.Request
 
 // PropositionTargets allow branching.
 type PropositionTargetRule struct {
-	Left *Target
-	Right *Target
+	Left *http.Handler
+	Right *http.Handler
 }
 
 type CacheTargetRule struct {
 	Cache *bufferedResponseWriter
 	IsNew bool
 	sync.RWMutex
-	Next *Target
+	Next *http.Handler
 }
 
 func NewCacheTargetRule(Destination string) *CacheTargetRule {
@@ -272,21 +266,21 @@ type RouteExpression struct {
 	Path        string
 	StatusCodes []int64
 	AccessTime  int64
-	Next        *Target
+	Next        *http.Handler
 }
 
-func (r *RouteExpression) AddTargetRule(rule Target) {
+func (r *RouteExpression) AddTargetRule(rule http.Handler) {
 	r.Next = &rule
 }
 
-func (t *ContentTargetRule) AddTargetRule(rule Target) {
+func (t *ContentTargetRule) AddTargetRule(rule http.Handler) {
 	t.Next = &rule
 }
-func (t *ProxyTargetRule) AddTargetRule(rule Target) {
+func (t *ProxyTargetRule) AddTargetRule(rule http.Handler) {
 	t.Next = &rule
 }
 
-func (t *CacheTargetRule) AddTargetRule(rule Target) {
+func (t *CacheTargetRule) AddTargetRule(rule http.Handler) {
 	t.Next = &rule
 }
 
