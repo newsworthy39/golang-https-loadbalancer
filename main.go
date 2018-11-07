@@ -129,13 +129,12 @@ func (p *ProxyTargetRule) ServeHTTP(res http.ResponseWriter, req *http.Request) 
 		fmt.Printf("Error parsing Target in ProxyTargetRule, %s, err: %s", p.Target, er)
 	}
 
-	// We allways, append our own "IP" or DNS-name. This function is mmeoized internally.
-	host, _ := externalIP()
-
-	breq, err := http.NewRequest("GET", fmt.Sprintf("%s://%s%s", org.Scheme, org.Host, req.URL.Path), nil)
-	breq.Header.Set("X-Forwarded-Host", req.Header.Get("Host"))
-	breq.Header.Set("X-Forwarded-For", fmt.Sprintf("%s, %s", req.Header.Get("X-Forwarded-For"), host))
+	breq, err := http.NewRequest(req.Method, fmt.Sprintf("%s://%s%s", org.Scheme, org.Host, req.URL.Path), nil)
+	breq.Header.Set("X-Forwarded-Host", req.Host)
+	breq.Header.Set("X-Forwarded-For", fmt.Sprintf("%s, %s", req.Header.Get("X-Forwarded-For"), req.RemoteAddr))
 	breq.Header.Set("X-Forwarded-Proto", req.URL.Scheme)
+	breq.Header.Set("User-Agent", req.Header.Get("User-Agent"))
+
 
 	resp, err := client.Do(breq)
 
@@ -482,7 +481,13 @@ func main() {
 			interceptWriter := bufferedResponseWriter{w, 0, 0}
 			defer interceptWriter.Flush()
 
+			if len(r.URL.Query().Get("key")) == 0 {
+				http.Error(w, "missing key", http.StatusUnauthorized)
+				return
+			}
+
 			h.ServeHTTP(&interceptWriter, r)
+
 			if r.Method != http.MethodGet && interceptWriter.HTTPStatus == http.StatusOK {
 				log.Printf("Scheduling refresh, because of api-change. (%d)\n",
 					interceptWriter.HTTPStatus )
