@@ -441,12 +441,14 @@ func main() {
 	}
 
 	// we will need some args, going here.
-	logToStdout := flag.Bool("log", false, "Log to stdout")
-	port := flag.Int("port", 9000, "Port to listen to")
+	logToStdout := flag.Bool("log", false, "Log to stdout.")
+	port := flag.Int("port", 9000, "Port to listen to.")
+	apiBackend := flag.String("apiBackend", "10.90.10.80", "Which backends to use for API-access.")
+	apiDomain := flag.String("apiDomain", "clouddom.eu", "What apex-domain is used for infrastructure.")
 
 	flag.Parse()
 
-	fmt.Printf("Using %s:%d.\n", host, *port)
+	fmt.Printf("Ports bound %s:%d, apiDomain: %s, apiBackend: %s \n", host, *port, *apiBackend, *apiDomain)
 
 	// Create root-node in graph.
 	routeexpressions := new(List)
@@ -477,6 +479,14 @@ func main() {
 	proxyRule := NewProxyTargetRule("https://www.tuxand.me", 10)
 	proxyRoute.AddTargetRule(proxyRule)
 	routeexpressions.Insert(*proxyRoute)
+
+	// Start api-part. We have hard-boiled api-hostnames in here, to 
+	// match our own infrastructure. That is, requests going to apiDomain
+	// are sent to those systems.
+	apiRoute := NewRouteExpression(fmt.Sprintf("http://api.%s", *apiDomain))
+	apiProxyRoute := NewProxyTargetRule(fmt.Sprintf("http://%s", *apiBackend), 10)
+	apiRoute.AddTargetRule(apiProxyRoute)
+	routeexpressions.Insert(*apiRoute)
 
 	// Start webserver, capture apps and use that.
 	http.HandleFunc("/", EnsureHTTPProtocolHeaders(
@@ -509,6 +519,6 @@ func main() {
 				return
 			}, *logToStdout)))
 
-	err = http.ListenAndServe(fmt.Sprintf(":%d", *port), nil)
+	err = http.ListenAndServe(fmt.Sprintf("%s:%d", host, *port), nil)
 	log.Fatal(err)
 }
