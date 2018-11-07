@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"errors"
 	"sync"
 	//	"encoding/json"
@@ -68,17 +67,15 @@ type bufferedResponseWriter struct {
 	http.ResponseWriter // embed struct
 	HTTPStatus          int
 	ResponseSize        int
-	buf                 *bytes.Buffer
 }
 
 func (w *bufferedResponseWriter) WriteHeader(status int) {
 	w.HTTPStatus = status
+	w.ResponseWriter.WriteHeader(status)
 }
 
 func (w *bufferedResponseWriter) Flush() {
 	z := w.ResponseWriter
-	z.WriteHeader(w.HTTPStatus)
-	z.Write(w.buf.Bytes())
 	if f, ok := z.(http.Flusher); ok {
 		f.Flush()
 	}
@@ -90,10 +87,11 @@ func (w *bufferedResponseWriter) CloseNotify() <-chan bool {
 
 func (w *bufferedResponseWriter) Write(b []byte) (int, error) {
 	if w.HTTPStatus == 0 {
-		w.HTTPStatus = 200
+		w.HTTPStatus = http.StatusOK
+		w.WriteHeader(http.StatusOK)
 	}
-	w.ResponseSize = len(b)
-	return w.buf.Write(b)
+	w.ResponseSize = w.ResponseSize + len(b)
+	return w.ResponseWriter.Write(b)
 }
 
 type ProxyTargetRule struct {
@@ -243,7 +241,7 @@ func (c *CacheTargetRule) ServeHTTP(res http.ResponseWriter, req *http.Request) 
 	if c.IsNew {
 		c.RUnlock()
 		c.Lock()
-		interceptWriter := &bufferedResponseWriter{res, 0, 0, bytes.NewBuffer(nil)}
+		interceptWriter := &bufferedResponseWriter{res, 0, 0 }
 		(*c.Next).ServeHTTP(interceptWriter, req)
 
 		interceptWriter.Header().Add("X-Cache-Hit", "HIT")
@@ -257,8 +255,7 @@ func (c *CacheTargetRule) ServeHTTP(res http.ResponseWriter, req *http.Request) 
 	for name, values := range c.Cache.Header() {
 		res.Header()[name] = values
 	}
-	res.WriteHeader(c.Cache.HTTPStatus)
-	res.Write(c.Cache.buf.Bytes())
+	//res.Write(c.Cache.buf.Bytes())
 	c.RUnlock()
 }
 
@@ -390,9 +387,11 @@ func (l *List) FindTargetGroupByRouteExpression(req *http.Request) (RouteExpress
 func NCSALogger(next http.HandlerFunc, logToStdout bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 
+
 		if logToStdout {
 			t := time.Now()
-			interceptWriter := bufferedResponseWriter{w, 0, 0, bytes.NewBuffer(nil)}
+
+			interceptWriter := bufferedResponseWriter{w, 0, 0}
 
 			next.ServeHTTP(&interceptWriter, r)
 
@@ -409,9 +408,8 @@ func NCSALogger(next http.HandlerFunc, logToStdout bool) http.HandlerFunc {
 				time.Since(t),
 			)
 
-			// BufferedResponseWriters, require us to manually, call Flush,
-			// This emits, the recorded status and body.
 			interceptWriter.Flush()
+
 		} else {
 			next.ServeHTTP(w, r)
 		}
@@ -476,10 +474,23 @@ func main() {
 
 	// Start api-part. We have hard-boiled api-hostnames in here, to 
 	// match our own infrastructure. That is, requests going to apiDomain
-	// are sent to those systems.
+	// are sent to those systems. We extract the return-code, to know
+	// if we're supposed to check something ourselves.
 	apiRoute := NewRouteExpression(fmt.Sprintf("http://api.%s", *apiDomain))
+	apiProxyIntercept := func(h http.Handler) http.Handler {
+		return http.HandlerFunc(func( w http.ResponseWriter, r* http.Request) {
+
+			interceptWriter := bufferedResponseWriter{w, 0, 0}
+
+			h.ServeHTTP(&interceptWriter, r)
+
+			log.Printf("Intercept Return: %d \n", interceptWriter.HTTPStatus )
+
+			interceptWriter.Flush()
+		})
+	}
 	apiProxyRoute := NewProxyTargetRule(fmt.Sprintf("http://%s", *apiBackend), 10)
-	apiRoute.AddTargetRule(apiProxyRoute)
+	apiRoute.AddTargetRule(apiProxyIntercept(apiProxyRoute))
 	routeexpressions.Insert(*apiRoute)
 
 	// Start webserver, capture apps and use that.
