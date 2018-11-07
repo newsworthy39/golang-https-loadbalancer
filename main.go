@@ -408,7 +408,7 @@ func NCSALogger(next http.HandlerFunc, logToStdout bool) http.HandlerFunc {
 				time.Since(t),
 			)
 
-			interceptWriter.Flush()
+			defer interceptWriter.Flush()
 
 		} else {
 			next.ServeHTTP(w, r)
@@ -479,14 +479,14 @@ func main() {
 	apiRoute := NewRouteExpression(fmt.Sprintf("http://api.%s", *apiDomain))
 	apiProxyIntercept := func(h http.Handler) http.Handler {
 		return http.HandlerFunc(func( w http.ResponseWriter, r* http.Request) {
-
 			interceptWriter := bufferedResponseWriter{w, 0, 0}
+			defer interceptWriter.Flush()
 
 			h.ServeHTTP(&interceptWriter, r)
-
-			log.Printf("Intercept Return: %d \n", interceptWriter.HTTPStatus )
-
-			interceptWriter.Flush()
+			if r.Method != http.MethodGet && interceptWriter.HTTPStatus == http.StatusOK {
+				log.Printf("Scheduling refresh, because of api-change. (%d)\n",
+					interceptWriter.HTTPStatus )
+			}
 		})
 	}
 	apiProxyRoute := NewProxyTargetRule(fmt.Sprintf("http://%s", *apiBackend), 10)
