@@ -2,16 +2,27 @@ package util
 
 import (
 	"encoding/json"
-	"net/http"
 	"fmt"
 	"io/ioutil"
+	"net/http"
 	"os"
 )
 
-func LoadConfiguration(apiBackend string, apiDomain string) *List {
-	expressions := new(List)
+type config struct {
+	Peers  []string
+	Routes []string
+}
 
-	response, err := http.Get(fmt.Sprintf("%s/getconfig.php", apiBackend))
+type route struct {
+	Type          string
+	Path          string
+	Loadbalancing string
+	Backends      []string
+}
+
+func doConfiguration(path string, body *config) {
+
+	response, err := http.Get(path)
 	defer response.Body.Close()
 
 	if err != nil {
@@ -23,25 +34,47 @@ func LoadConfiguration(apiBackend string, apiDomain string) *List {
 			fmt.Printf("PPanic %s", err)
 			os.Exit(1)
 		}
-		fmt.Printf("%s\n", string(contents))
 
-		// Don't export this.
-		var configuration struct {
-			Peers []string
-			Routes []string
-		}
-
-		if err = json.Unmarshal(contents, &configuration); err != nil {
+		if err = json.Unmarshal(contents, &body); err != nil {
 			fmt.Printf("Configuration broken: %s", err)
 		}
+	}
+}
 
-		for k := range configuration.Routes {
-			fmt.Printf("K : %s", k)	
+func doRoute(path string, body *route) {
+
+	response, err := http.Get(path)
+	defer response.Body.Close()
+
+	if err != nil {
+		fmt.Printf("%s", err)
+		os.Exit(1)
+	} else {
+		contents, err := ioutil.ReadAll(response.Body)
+		if err != nil {
+			fmt.Printf("PPanic %s", err)
+			os.Exit(1)
 		}
 
-		fmt.Printf("%+v", configuration)
+		if err = json.Unmarshal(contents, &body); err != nil {
+			fmt.Printf("Configuration broken: %s", err)
+		}
+	}
+}
+
+func LoadConfiguration(apiBackend string, apiDomain string) *List {
+	expressions := new(List)
+
+	// Don't export this.
+	configuration := config{}
+
+	doConfiguration(fmt.Sprintf("%s/getconfig.php", apiBackend), &configuration)
+
+	route := route{}
+	for _, element := range configuration.Routes {
+		doRoute(element, &route)
+		fmt.Printf("%+v\n", route)
 	}
 
 	return expressions
 }
-

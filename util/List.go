@@ -59,11 +59,11 @@ func ShowBackwards(list *Node) {
 	}
 }
 
-func (l *List) Find(pred func(interface{}) bool) (interface{}, error) {
+func (l *List) Find(pred func(*interface{}) bool) (*interface{}, error) {
 	list := l.head
 	for list != nil {
-		if pred(list.key) {
-			return list.key, nil
+		if pred(&list.key) {
+			return &list.key, nil
 		}
 		list = list.next
 	}

@@ -347,10 +347,10 @@ func EnsureProtocolHeaders(next http.HandlerFunc, Headers []string, Scheme strin
 	}
 }
 
-func FindTargetGroupByRouteExpression(routeexpressions *util.List, req *http.Request) (RouteExpression, error) {
+func FindTargetGroupByRouteExpression(routeexpressions *util.List, req *http.Request) (*RouteExpression, error) {
 
-	rs, err := routeexpressions.Find(func(key interface{}) bool {
-		routeExpression := key.(RouteExpression)
+	rs, err := routeexpressions.Find(func(key *interface{}) bool {
+		routeExpression := (*key).(RouteExpression)
 		if strings.HasPrefix(fmt.Sprintf("%s://%s%s", req.URL.Scheme,
 				req.Host, req.URL.Path), routeExpression.Path) {
 			return true
@@ -359,10 +359,12 @@ func FindTargetGroupByRouteExpression(routeexpressions *util.List, req *http.Req
 	})
 
 	if (err != nil) {
-		return RouteExpression{}, err
+		return &RouteExpression{}, err
 	}
 
-	return rs.(RouteExpression), err
+	rs1 := (*rs).(RouteExpression)
+	return &rs1, err
+
 }
 
 
@@ -426,10 +428,6 @@ func main() {
 						// Deliver, not found, here is a problem to do sort-of-a-root-accounting.
 						res.WriteHeader(http.StatusNotFound)
 						res.Write([]byte(fmt.Sprintf("Not found (%s!).", req.URL.Path[1:])))
-						// Error to flush the io-streams
-						// http.Error(res,
-						//	fmt.Sprintf("This loadbalancer has not yet been configured."),
-						//	http.StatusInternalServerError)
 						return
 
 					}
@@ -443,7 +441,6 @@ func main() {
 					// * Proxy-cache event-based notification systems
 					rs.ServeHTTP(res, req)
 
-					return
 				}, []string{"X-Loadbalancer: Golang-Accelerator"}, "http"), *logToStdout))
 
 	err = http.ListenAndServe(*listen, nil)
