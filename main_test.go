@@ -5,16 +5,17 @@ import (
 	"testing"
 	"fmt"
 	"io/ioutil"
+	"github.com/newsworthy39/golang-https-loadbalancer/util"
 )
 
 func TestFindTargetGroupByRouteExpression(t *testing.T) {
 	req := httptest.NewRequest("GET", "http://localhost/test", nil)
 
-	routeexpressions := new(List)
+	routeexpressions := new(util.List)
 	routeexpressions.Insert (*NewRouteExpression("http://localhost/"))
 
 	t.Logf("* Testing found functionality, Path: %s, Host: %s\n", req.URL.Path, fmt.Sprintf("%s://%s", req.URL.Scheme, req.URL.Host))
-	rs, err := routeexpressions.FindTargetGroupByRouteExpression(req)
+	rs, err := FindTargetGroupByRouteExpression(routeexpressions, req)
 	if err != nil {
 		t.Errorf("Did not find proper %s" ,err)
 	}
@@ -26,11 +27,11 @@ func TestFindTargetGroupByRouteExpression(t *testing.T) {
 func TestNotFindTargetGroupByRouteExpression(t *testing.T) {
 	req := httptest.NewRequest("GET", "http://localhost/", nil)
 
-	routeexpressions := new(List)
+	routeexpressions := new(util.List)
 	routeexpressions.Insert (*NewRouteExpression("https://localhost/"))
 
 	t.Logf("* Testing not-found functionality, Path: %s, Host: %s\n", req.URL.Path, fmt.Sprintf("%s://%s", req.URL.Scheme, req.URL.Host))
-	rs, err := routeexpressions.FindTargetGroupByRouteExpression(req)
+	rs, err := FindTargetGroupByRouteExpression(routeexpressions, req)
 	if err != nil {
 		t.Logf("Did not find proper %s" ,err)
 	}
@@ -43,13 +44,13 @@ func TestCacheRulesFindTargetGroupByRouteExpression(t *testing.T) {
 	req := httptest.NewRequest("GET", "http://localhost/", nil)
 	res := httptest.NewRecorder()
 
-	routeexpressions := new(List)
+	routeexpressions := new(util.List)
 	route := NewRouteExpression("http://localhost/")
 	route.AddTargetRule(NewContentTargetRule("This is the end"))
 	routeexpressions.Insert (*route)
 
 	t.Logf("* Testing Rule chain, Path: %s, Host: %s\n", req.URL.Path, fmt.Sprintf("%s://%s", req.URL.Scheme, req.URL.Host))
-	rs, err := routeexpressions.FindTargetGroupByRouteExpression(req)
+	rs, err := FindTargetGroupByRouteExpression(routeexpressions, req)
 	if err != nil {
 		t.Logf("Did not find proper %s" ,err)
 	}
@@ -68,13 +69,13 @@ func TestProxyRulesFindTargetGroupByRouteExpression(t *testing.T) {
 	req := httptest.NewRequest("GET", "http://localhost/", nil)
 	res := httptest.NewRecorder()
 
-	routeexpressions := new(List)
+	routeexpressions := new(util.List)
 	route := NewRouteExpression("http://localhost/")
 	route.AddTargetRule(NewProxyTargetRule("https://www.tuxand.me", 10))
 	routeexpressions.Insert (*route)
 
 	t.Logf("* Testing Rule chain, Path: %s, Host: %s\n", req.URL.Path, fmt.Sprintf("%s://%s", req.URL.Scheme, req.URL.Host))
-	rs, err := routeexpressions.FindTargetGroupByRouteExpression(req)
+	rs, err := FindTargetGroupByRouteExpression(routeexpressions, req)
 	if err != nil {
 		t.Logf("Did not find proper %s" ,err)
 	}
@@ -93,13 +94,13 @@ func TestRedirectTargetRule(t *testing.T) {
 	req := httptest.NewRequest("GET", "http://localhost/", nil)
 	res := httptest.NewRecorder()
 
-	routeexpressions := new(List)
+	routeexpressions := new(util.List)
 	route := NewRouteExpression("http://localhost/")
 	route.AddTargetRule(NewRedirectTargetRule("https://www.tuxand.me", 301))
 	routeexpressions.Insert (*route)
 
 	t.Logf("* Testing Rule chain, Path: %s, Host: %s\n", req.URL.Path, fmt.Sprintf("%s://%s", req.URL.Scheme, req.URL.Host))
-	rs, err := routeexpressions.FindTargetGroupByRouteExpression(req)
+	rs, err := FindTargetGroupByRouteExpression(routeexpressions, req)
 	if err != nil {
 		t.Logf("Did not find proper %s" ,err)
 	}
@@ -119,13 +120,13 @@ func TestCacheTargetRule(t *testing.T) {
 	req := httptest.NewRequest("GET", "http://localhost/cache", nil)
 	res := httptest.NewRecorder()
 
-	routeexpressions := new(List)
+	routeexpressions := new(util.List)
 	route := NewRouteExpression("http://localhost/cache")
 	route.AddTargetRule(NewCacheTargetRule("http://www.tuxand.me"))
 	routeexpressions.Insert (*route)
 
 	t.Logf("* Testing Rule chain, Path: %s, Host: %s\n", req.URL.Path, fmt.Sprintf("%s://%s", req.URL.Scheme, req.URL.Host))
-	rs, err := routeexpressions.FindTargetGroupByRouteExpression(req)
+	rs, err := FindTargetGroupByRouteExpression(routeexpressions, req)
 	if err != nil {
 		t.Logf("Did not find proper %s" ,err)
 	}
