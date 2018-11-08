@@ -2,8 +2,8 @@ package main
 
 import (
 	"errors"
-	"sync"
 	"fmt"
+	"sync"
 	//	zmq "github.com/pebbe/zmq4"
 	"io/ioutil"
 	"log"
@@ -12,11 +12,11 @@ import (
 	//	"regexp"
 	"flag"
 	"github.com/BenLubar/memoize"
+	"github.com/newsworthy39/golang-https-loadbalancer/util"
 	"net"
 	"net/url"
 	"strings"
 	"time"
-	"github.com/newsworthy39/golang-https-loadbalancer/util"
 )
 
 // externalIP
@@ -268,14 +268,12 @@ type RouteExpression struct {
 func (r *RouteExpression) AddTargetRule(rule http.Handler) {
 	r.Next = &rule
 }
-
 func (t *ContentTargetRule) AddTargetRule(rule http.Handler) {
 	t.Next = &rule
 }
 func (t *ProxyTargetRule) AddTargetRule(rule http.Handler) {
 	t.Next = &rule
 }
-
 func (t *CacheTargetRule) AddTargetRule(rule http.Handler) {
 	t.Next = &rule
 }
@@ -352,13 +350,13 @@ func FindTargetGroupByRouteExpression(routeexpressions *util.List, req *http.Req
 	rs, err := routeexpressions.Find(func(key *interface{}) bool {
 		routeExpression := (*key).(RouteExpression)
 		if strings.HasPrefix(fmt.Sprintf("%s://%s%s", req.URL.Scheme,
-				req.Host, req.URL.Path), routeExpression.Path) {
+			req.Host, req.URL.Path), routeExpression.Path) {
 			return true
 		}
 		return false
 	})
 
-	if (err != nil) {
+	if err != nil {
 		return &RouteExpression{}, err
 	}
 
@@ -367,12 +365,32 @@ func FindTargetGroupByRouteExpression(routeexpressions *util.List, req *http.Req
 
 }
 
+func LoadConfiguration(apiBackend string, apiDomain string, root *util.List) (error) {
+	// Don't export this.
+	configuration := util.DoConfiguration(fmt.Sprintf("%s/getconfig.php", apiBackend))
+
+	for _, element := range configuration.Routes {
+		route := util.DoRoute(element)
+
+		// TODO: Actually make this work.
+		// {Type:ProxyTarget Path:http://test.api.comf/api Loadbalancing:round-robin
+		// Backends:[https://www.tuxand.me]}
+		if route.Type == "ProxyTarget" {
+			rootRoute := NewRouteExpression(route.Path)
+			rootRoute.AddTargetRule(NewProxyTargetRule(route.Backends[0], 10))
+			root.Insert(*rootRoute)
+		}
+	}
+
+	return nil
+}
 
 func main() {
 
 	host, err := externalIP()
 	if err != nil {
 		fmt.Println(err)
+		host = "*"
 	}
 
 	// we will need some args, going here.
@@ -386,7 +404,7 @@ func main() {
 	fmt.Printf("Listen :%s, apiDomain: %s, apiBackend: %s \n", *listen, *apiBackend, *apiDomain)
 
 	// Create root-node in graph, and monkey-patch our configuration onto it.
-	routeexpressions := util.LoadConfiguration(*apiBackend, *apiDomain)
+	routeexpressions := new(util.List)
 
 	// Start api-part. We have hard-boiled api-hostnames in here, to
 	// match our own infrastructure. That is, requests going to apiDomain
@@ -408,12 +426,26 @@ func main() {
 			if r.Method != http.MethodGet && interceptWriter.HTTPStatus == http.StatusOK {
 				log.Printf("Scheduling refresh, because of api-change. (%d)\n",
 					interceptWriter.HTTPStatus)
+
+				routeexpressions = new(util.List) // override
+				routeexpressions.Insert(*apiRoute) // Copy the api-node.
+
+				// Create root-node in graph, and monkey-patch our configuration onto it.
+				if err := LoadConfiguration(*apiBackend, *apiDomain, routeexpressions); err != nil {
+					fmt.Printf("Could not load configuration. Aborting.")
+				}
+
 			}
 		})
 	}
 	apiProxyRoute := NewProxyTargetRule(*apiBackend, 10)
 	apiRoute.AddTargetRule(apiProxyIntercept(apiProxyRoute))
 	routeexpressions.Insert(*apiRoute)
+
+	// Create root-node in graph, and monkey-patch our configuration onto it.
+	if err := LoadConfiguration(*apiBackend, *apiDomain, routeexpressions); err != nil {
+		fmt.Printf("Could not load configuration. Aborting.")
+	}
 
 	// Start webserver, capture apps and use that.
 	http.HandleFunc("/",
@@ -442,7 +474,6 @@ func main() {
 					rs.ServeHTTP(res, req)
 
 				}, []string{"X-Loadbalancer: Golang-Accelerator"}, "http"), *logToStdout))
-
 	err = http.ListenAndServe(*listen, nil)
 	log.Fatal(err)
 }

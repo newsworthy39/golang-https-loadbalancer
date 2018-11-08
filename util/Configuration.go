@@ -20,10 +20,11 @@ type route struct {
 	Backends      []string
 }
 
-func doConfiguration(path string, body *config) {
+func DoConfiguration(path string) config {
 
 	response, err := http.Get(path)
 	defer response.Body.Close()
+	config := config{}
 
 	if err != nil {
 		fmt.Printf("%s", err)
@@ -35,46 +36,35 @@ func doConfiguration(path string, body *config) {
 			os.Exit(1)
 		}
 
-		if err = json.Unmarshal(contents, &body); err != nil {
+		if err = json.Unmarshal(contents, &config); err != nil {
 			fmt.Printf("Configuration broken: %s", err)
 		}
 	}
+
+	return config
 }
 
-func doRoute(path string, body *route) {
+func DoRoute(path string) route {
 
 	response, err := http.Get(path)
 	defer response.Body.Close()
-
-	if err != nil {
-		fmt.Printf("%s", err)
-		os.Exit(1)
-	} else {
-		contents, err := ioutil.ReadAll(response.Body)
-		if err != nil {
-			fmt.Printf("PPanic %s", err)
-			os.Exit(1)
-		}
-
-		if err = json.Unmarshal(contents, &body); err != nil {
-			fmt.Printf("Configuration broken: %s", err)
-		}
-	}
-}
-
-func LoadConfiguration(apiBackend string, apiDomain string) *List {
-	expressions := new(List)
-
-	// Don't export this.
-	configuration := config{}
-
-	doConfiguration(fmt.Sprintf("%s/getconfig.php", apiBackend), &configuration)
-
 	route := route{}
-	for _, element := range configuration.Routes {
-		doRoute(element, &route)
-		fmt.Printf("%+v\n", route)
+
+	if err != nil {
+		fmt.Printf("%s", err)
+		os.Exit(1)
+	} else {
+		contents, err := ioutil.ReadAll(response.Body)
+		if err != nil {
+			fmt.Printf("PPanic %s", err)
+			os.Exit(1)
+		}
+
+		if err = json.Unmarshal(contents, &route); err != nil {
+			fmt.Printf("Configuration broken: %s", err)
+		}
 	}
 
-	return expressions
+	return route
 }
+
