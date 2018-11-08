@@ -23,13 +23,13 @@ type route struct {
 func DoConfiguration(path string) config {
 
 	response, err := http.Get(path)
-	defer response.Body.Close()
 	config := config{}
 
 	if err != nil {
 		fmt.Printf("%s", err)
 		os.Exit(1)
 	} else {
+		defer response.Body.Close()
 		contents, err := ioutil.ReadAll(response.Body)
 		if err != nil {
 			fmt.Printf("PPanic %s", err)
@@ -47,13 +47,13 @@ func DoConfiguration(path string) config {
 func DoRoute(path string) route {
 
 	response, err := http.Get(path)
-	defer response.Body.Close()
 	route := route{}
 
 	if err != nil {
 		fmt.Printf("%s", err)
 		os.Exit(1)
 	} else {
+		defer response.Body.Close()
 		contents, err := ioutil.ReadAll(response.Body)
 		if err != nil {
 			fmt.Printf("PPanic %s", err)

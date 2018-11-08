@@ -161,6 +161,11 @@ func (p *ProxyTargetRule) ServeHTTP(res http.ResponseWriter, req *http.Request) 
 	}
 }
 
+func (t *ProxyTargetRule) AddTargetRule(rule http.Handler) {
+	t.Next = &rule
+}
+
+
 type ContentTargetRule struct {
 	Content    string
 	header     http.Header
@@ -211,6 +216,10 @@ func (p *ContentTargetRule) ServeHTTP(res http.ResponseWriter, req *http.Request
 	res.Write([]byte(p.Content))
 }
 
+func (t *ContentTargetRule) AddTargetRule(rule http.Handler) {
+	t.Next = &rule
+}
+
 // PropositionTargets allow branching.
 type PropositionTargetRule struct {
 	Left  *http.Handler
@@ -257,25 +266,13 @@ func (c *CacheTargetRule) ServeHTTP(res http.ResponseWriter, req *http.Request) 
 	//res.Write(c.Cache.buf.Bytes())
 	c.RUnlock()
 }
+func (t *CacheTargetRule) AddTargetRule(rule http.Handler) {
+	t.Next = &rule
+}
 
 type RouteExpression struct {
 	Path        string
-	StatusCodes []int64
-	AccessTime  int64
 	Next        *http.Handler
-}
-
-func (r *RouteExpression) AddTargetRule(rule http.Handler) {
-	r.Next = &rule
-}
-func (t *ContentTargetRule) AddTargetRule(rule http.Handler) {
-	t.Next = &rule
-}
-func (t *ProxyTargetRule) AddTargetRule(rule http.Handler) {
-	t.Next = &rule
-}
-func (t *CacheTargetRule) AddTargetRule(rule http.Handler) {
-	t.Next = &rule
 }
 
 func NewRouteExpression(Path string) *RouteExpression {
@@ -286,6 +283,30 @@ func NewRouteExpression(Path string) *RouteExpression {
 
 func (r *RouteExpression) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	(*r.Next).ServeHTTP(res, req)
+}
+
+func (r *RouteExpression) AddTargetRule(rule http.Handler) {
+	r.Next = &rule
+}
+
+type LoadBalancer struct {
+	Count        int
+	Next         [64]*http.Handler
+	Serve        int
+}
+
+func NewLoadBalancer(method string) *LoadBalancer {
+	return &LoadBalancer { Count: 0, Serve: 0}
+}
+
+func (l *LoadBalancer) AddTargetRule(rule http.Handler) {
+	l.Next[l.Count] = &rule
+	l.Count++
+}
+func (l *LoadBalancer) ServeHTTP(res http.ResponseWriter, req *http.Request) {
+	(*(l.Next[l.Serve])).ServeHTTP(res, req)
+	l.Serve++
+	l.Serve = l.Serve % l.Count
 }
 
 //
@@ -377,7 +398,12 @@ func LoadConfiguration(apiBackend string, apiDomain string, root *util.List) (er
 		// Backends:[https://www.tuxand.me]}
 		if route.Type == "ProxyTarget" {
 			rootRoute := NewRouteExpression(route.Path)
-			rootRoute.AddTargetRule(NewProxyTargetRule(route.Backends[0], 10))
+			lb := NewLoadBalancer(route.Loadbalancing)
+			for _, backend := range route.Backends {
+				lb.AddTargetRule(NewProxyTargetRule(backend, 10))
+			}
+
+			rootRoute.AddTargetRule(lb)
 			root.Insert(*rootRoute)
 		}
 	}
