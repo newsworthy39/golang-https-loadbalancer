@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"math/rand"
 )
 
 // externalIP
@@ -289,24 +290,53 @@ func (r *RouteExpression) AddTargetRule(rule http.Handler) {
 	r.Next = &rule
 }
 
+func RandomStrategy(lb *LoadBalancer) int {
+        return rand.Intn(lb.Count)
+}
+
+func RoundRobinStrategy(lb *LoadBalancer) int {
+        r := lb.Requests
+        return int(r) % lb.Count
+}
+
+func SelectStrategy(lb *LoadBalancer) int {
+        m := map[string]func(lb *LoadBalancer) int {
+                "round-robin": RoundRobinStrategy,
+                "random": RandomStrategy,
+        }
+	_, prs := m[lb.Method]
+	if prs == false {
+	        return m["round-robin"](lb)
+	} else {
+		return m[lb.Method](lb)
+	}
+}
+
+
 type LoadBalancer struct {
-	Count        int
+	Requests     int
 	Next         [64]*http.Handler
-	Serve        int
+	Count	     int
+	Method       string
 }
 
 func NewLoadBalancer(method string) *LoadBalancer {
-	return &LoadBalancer { Count: 0, Serve: 0}
+	return &LoadBalancer { Count: 0, Requests: 0, Method: method}
 }
 
 func (l *LoadBalancer) AddTargetRule(rule http.Handler) {
 	l.Next[l.Count] = &rule
 	l.Count++
 }
+
 func (l *LoadBalancer) ServeHTTP(res http.ResponseWriter, req *http.Request) {
-	(*(l.Next[l.Serve])).ServeHTTP(res, req)
-	l.Serve++
-	l.Serve = l.Serve % l.Count
+	l.Requests++
+
+	candidate := SelectStrategy(l)
+
+	fmt.Printf("Candidate: %d\n", candidate)
+
+	(*(l.Next[candidate])).ServeHTTP(res, req)
 }
 
 //
