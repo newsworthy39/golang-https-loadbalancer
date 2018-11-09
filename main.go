@@ -130,14 +130,15 @@ func (p *ProxyTargetRule) ServeHTTP(res http.ResponseWriter, req *http.Request) 
 		fmt.Printf("Error parsing Target in ProxyTargetRule, %s, err: %s", p.Target, er)
 	}
 
-	breq, err := http.NewRequest(req.Method, fmt.Sprintf("%s://%s%s", org.Scheme, org.Host, req.URL.Path), nil)
+	breq, err := http.NewRequest(req.Method, fmt.Sprintf("%s://%s%s", org.Scheme, org.Host, req.URL.Path),
+			req.Body)
+
 	breq.Header.Set("X-Forwarded-Host", req.Host)
 	breq.Header.Set("X-Forwarded-For", fmt.Sprintf("%s, %s", req.Header.Get("X-Forwarded-For"), req.RemoteAddr))
 	breq.Header.Set("X-Forwarded-Proto", req.URL.Scheme)
 	breq.Header.Set("User-Agent", req.Header.Get("User-Agent"))
 
 	resp, err := client.Do(breq)
-
 	if err != nil {
 		// handle error
 	}
@@ -331,11 +332,7 @@ func (l *LoadBalancer) AddTargetRule(rule http.Handler) {
 
 func (l *LoadBalancer) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	l.Requests++
-
 	candidate := SelectStrategy(l)
-
-	fmt.Printf("Candidate: %d\n", candidate)
-
 	(*(l.Next[candidate])).ServeHTTP(res, req)
 }
 
@@ -417,9 +414,7 @@ func FindTargetGroupByRouteExpression(routeexpressions *util.List, req *http.Req
 }
 
 func LoadConfiguration(apiBackend string, apiDomain string, root *util.List) (error) {
-	// Don't export this.
 	configuration := util.DoConfiguration(fmt.Sprintf("%s/getconfig.php", apiBackend))
-
 	for _, element := range configuration.Routes {
 		route := util.DoRoute(element)
 
