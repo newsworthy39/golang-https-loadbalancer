@@ -427,7 +427,7 @@ func main() {
 	flag.Parse()
 
 	// Output some sensible information about operation.
-	fmt.Printf("Listen :%s, apiDomain: %s, apiBackend: %s \n", *listen, *apiBackend, *apiDomain)
+	fmt.Printf("Listen :%s, apiDomain: %s, apiBackend: %s \n", *listen, *apiDomain, *apiBackend)
 
 	// Create root-node in graph, and monkey-patch our configuration onto it.
 	routeexpressions := new(util.List)
