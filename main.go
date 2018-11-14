@@ -344,8 +344,10 @@ func (l *LoadBalancer) AddTargetRule(rule http.Handler) {
 
 func (l *LoadBalancer) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	l.Requests++
-	candidate := SelectStrategy(l)
-	(*(l.Next[candidate])).ServeHTTP(res, req)
+	if l.Count != 0 {
+		candidate := SelectStrategy(l)
+		(*(l.Next[candidate])).ServeHTTP(res, req)
+	}
 }
 
 // NCSA Logging Format to log.
