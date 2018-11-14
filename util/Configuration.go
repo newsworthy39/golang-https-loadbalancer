@@ -8,63 +8,61 @@ import (
 	"os"
 )
 
-type config struct {
-	Peers  []string
-	Routes []string
+type ApiConfiguration struct {
+	apiDomain string
+	apiBackend string
+	secret string
+	accessKey string
+}
+
+type Backend struct {
+	Backend string
 }
 
 type route struct {
 	Type          string
 	Path          string
 	Loadbalancing string
-	Backends      []string
+	Backends      []Backend
 }
 
-func DoConfiguration(path string) config {
+func NewApiConfiguration(apiDomain string, apiBackend string, secret string, accessKey string) *ApiConfiguration {
+	return &ApiConfiguration{apiDomain, apiBackend, secret, accessKey}
+}
 
-	response, err := http.Get(path)
-	config := config{}
+func (a *ApiConfiguration) LoadConfigurationFromRESTApi() []route {
+
+	path := fmt.Sprintf("%s/loadbalancer", a.apiBackend)
+
+	req, err := http.NewRequest("GET", path, nil)
+	routes := []route{}
 
 	if err != nil {
 		fmt.Printf("%s", err)
 		os.Exit(1)
 	} else {
-		defer response.Body.Close()
-		contents, err := ioutil.ReadAll(response.Body)
+		req.Header.Set("AccessKey", a.accessKey)
+		req.Header.Set("Secret", a.secret)
+		client := &http.Client{}
+		resp, err := client.Do(req)
+		if err != nil {
+			fmt.Printf("%s", err)
+			os.Exit(1)
+		}
+
+		defer resp.Body.Close()
+		contents, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			fmt.Printf("PPanic %s", err)
 			os.Exit(1)
 		}
 
-		if err = json.Unmarshal(contents, &config); err != nil {
+		if err = json.Unmarshal(contents, &routes); err != nil {
 			fmt.Printf("Configuration broken: %s", err)
 		}
 	}
 
-	return config
+	return routes
 }
 
-func DoRoute(path string) route {
-
-	response, err := http.Get(path)
-	route := route{}
-
-	if err != nil {
-		fmt.Printf("%s", err)
-		os.Exit(1)
-	} else {
-		defer response.Body.Close()
-		contents, err := ioutil.ReadAll(response.Body)
-		if err != nil {
-			fmt.Printf("PPanic %s", err)
-			os.Exit(1)
-		}
-
-		if err = json.Unmarshal(contents, &route); err != nil {
-			fmt.Printf("Configuration broken: %s", err)
-		}
-	}
-
-	return route
-}
 

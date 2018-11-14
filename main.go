@@ -8,7 +8,6 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
-	"os"
 	//	"regexp"
 	"flag"
 	"github.com/BenLubar/memoize"
@@ -103,8 +102,8 @@ type ProxyTargetRule struct {
 	Next                     *http.Handler
 }
 
-func NewProxyTargetRule(Destination string, MaxBackends int) *ProxyTargetRule {
-	return &ProxyTargetRule{Target: Destination,
+func NewProxyTargetRule(Destination util.Backend, MaxBackends int) *ProxyTargetRule {
+	return &ProxyTargetRule{Target: Destination.Backend,
 		MaxBackendConnections: MaxBackends}
 }
 
@@ -137,6 +136,15 @@ func (p *ProxyTargetRule) ServeHTTP(res http.ResponseWriter, req *http.Request) 
 	breq.Header.Set("X-Forwarded-For", fmt.Sprintf("%s, %s", req.Header.Get("X-Forwarded-For"), req.RemoteAddr))
 	breq.Header.Set("X-Forwarded-Proto", req.URL.Scheme)
 	breq.Header.Set("User-Agent", req.Header.Get("User-Agent"))
+
+	if  element := req.Header.Get("AccessKey"); element != "" {
+		breq.Header.Set("AccessKey", element)
+	}
+
+	if  secret := req.Header.Get("Secret"); secret != "" {
+		breq.Header.Set("Secret", secret)
+	}
+
 
 	resp, err := client.Do(breq)
 	if err != nil {
@@ -235,7 +243,7 @@ type CacheTargetRule struct {
 	Next *http.Handler
 }
 
-func NewCacheTargetRule(Destination string) *CacheTargetRule {
+func NewCacheTargetRule(Destination util.Backend) *CacheTargetRule {
 	target := NewProxyTargetRule(Destination, 10)
 	rule := CacheTargetRule{IsNew: true}
 	rule.AddTargetRule(target)
@@ -297,7 +305,11 @@ func RandomStrategy(lb *LoadBalancer) int {
 
 func RoundRobinStrategy(lb *LoadBalancer) int {
         r := lb.Requests
-        return int(r) % lb.Count
+	if (lb.Count > 0) {
+	        return int(r) % lb.Count
+	} else {
+		return 0
+	}
 }
 
 func SelectStrategy(lb *LoadBalancer) int {
@@ -334,16 +346,6 @@ func (l *LoadBalancer) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	l.Requests++
 	candidate := SelectStrategy(l)
 	(*(l.Next[candidate])).ServeHTTP(res, req)
-}
-
-//
-// Helpers
-//
-func getEnv(key, fallback string) string {
-	if value, ok := os.LookupEnv(key); ok {
-		return value
-	}
-	return fallback
 }
 
 // NCSA Logging Format to log.
@@ -413,12 +415,13 @@ func FindTargetGroupByRouteExpression(routeexpressions *util.List, req *http.Req
 
 }
 
-func LoadConfiguration(apiBackend string, apiDomain string, root *util.List) (error) {
-	configuration := util.DoConfiguration(fmt.Sprintf("%s/getconfig.php", apiBackend))
-	for _, element := range configuration.Routes {
-		route := util.DoRoute(element)
+func LoadConfiguration(apiConfig *util.ApiConfiguration, root *util.List) (error) {
+	routes := apiConfig.LoadConfigurationFromRESTApi()
 
-		// TODO: Actually make this work.
+	for _, route := range routes {
+
+		fmt.Printf("%+v", route);
+
 		// {Type:ProxyTarget Path:http://test.api.comf/api Loadbalancing:round-robin
 		// Backends:[https://www.tuxand.me]}
 		if route.Type == "ProxyTarget" {
@@ -449,10 +452,15 @@ func main() {
 	listen := flag.String("listen", fmt.Sprintf("%s:%d", host, 8080), "Listen description.")
 	apiBackend := flag.String("apiBackend", "http://10.90.10.80", "Which backends to use for API-access.")
 	apiDomain := flag.String("apiDomain", "clouddom.eu", "What apex-domain is used for infrastructure.")
+	secret := flag.String("secret", "", "The secret associated.")
+	access := flag.String("accesskey", "", "The access-key associated to use")
+
 	flag.Parse()
 
+	apiconfig  := util.NewApiConfiguration(*apiDomain, *apiBackend, *secret, *access)
+
 	// Output some sensible information about operation.
-	fmt.Printf("Listen :%s, apiDomain: %s, apiBackend: %s \n", *listen, *apiDomain, *apiBackend)
+	fmt.Printf("Listen :%s, apiConfiguration: %+v \n", *listen, apiconfig)
 
 	// Create root-node in graph, and monkey-patch our configuration onto it.
 	routeexpressions := new(util.List)
@@ -467,11 +475,6 @@ func main() {
 			interceptWriter := bufferedResponseWriter{w, 0, 0}
 			defer interceptWriter.Flush()
 
-			if len(r.URL.Query().Get("key")) == 0 {
-				http.Error(w, "missing key", http.StatusUnauthorized)
-				return
-			}
-
 			h.ServeHTTP(&interceptWriter, r)
 
 			if r.Method != http.MethodGet && interceptWriter.HTTPStatus == http.StatusOK {
@@ -482,19 +485,19 @@ func main() {
 				routeexpressions.Insert(*apiRoute) // Copy the api-node.
 
 				// Create root-node in graph, and monkey-patch our configuration onto it.
-				if err := LoadConfiguration(*apiBackend, *apiDomain, routeexpressions); err != nil {
+				if err := LoadConfiguration(apiconfig, routeexpressions); err != nil {
 					fmt.Printf("Could not load configuration. Aborting.")
 				}
 
 			}
 		})
 	}
-	apiProxyRoute := NewProxyTargetRule(*apiBackend, 10)
+	apiProxyRoute := NewProxyTargetRule(util.Backend{Backend :*apiBackend}, 10)
 	apiRoute.AddTargetRule(apiProxyIntercept(apiProxyRoute))
 	routeexpressions.Insert(*apiRoute)
 
 	// Create root-node in graph, and monkey-patch our configuration onto it.
-	if err := LoadConfiguration(*apiBackend, *apiDomain, routeexpressions); err != nil {
+	if err := LoadConfiguration(apiconfig, routeexpressions); err != nil {
 		fmt.Printf("Could not load configuration. Aborting.")
 	}
 
