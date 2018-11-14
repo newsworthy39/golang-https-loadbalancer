@@ -428,7 +428,7 @@ func LoadConfiguration(apiConfig *util.ApiConfiguration, root *util.List) (error
 		// Backends:[https://www.tuxand.me]}
 		if route.Type == "ProxyTarget" {
 			rootRoute := NewRouteExpression(route.Path)
-			lb := NewLoadBalancer(route.Loadbalancing)
+			lb := NewLoadBalancer(route.Method)
 			for _, backend := range route.Backends {
 				lb.AddTargetRule(NewProxyTargetRule(backend, 10))
 			}

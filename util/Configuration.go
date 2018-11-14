@@ -22,7 +22,7 @@ type Backend struct {
 type route struct {
 	Type          string
 	Path          string
-	Loadbalancing string
+	Method	      string
 	Backends      []Backend
 }
 
@@ -51,6 +51,11 @@ func (a *ApiConfiguration) LoadConfigurationFromRESTApi() []route {
 		}
 
 		defer resp.Body.Close()
+		if resp.StatusCode != 200 {
+			fmt.Printf("Could not read configuration from API");
+			os.Exit(1)
+		}
+
 		contents, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			fmt.Printf("PPanic %s", err)
