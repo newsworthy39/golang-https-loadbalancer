@@ -451,7 +451,7 @@ func main() {
 
 	// we will need some args, going here.
 	logToStdout := flag.Bool("log", false, "Log to stdout.")
-	listen := flag.String("listen", fmt.Sprintf("%s:%d", host, 8080), "Listen description.")
+	listen := flag.String("listen", fmt.Sprintf("%s:%d", host, 443), "Listen description.")
 	apiBackend := flag.String("apiBackend", "http://10.90.10.80", "Which backends to use for API-access.")
 	apiDomain := flag.String("apiDomain", "clouddom.eu", "What apex-domain is used for infrastructure.")
 	secret := flag.String("secret", "", "The secret associated.")
@@ -471,7 +471,7 @@ func main() {
 	// match our own infrastructure. That is, requests going to apiDomain
 	// are sent to those systems. We extract the return-code, to know
 	// if we're supposed to check something ourselves.
-	apiRoute := NewRouteExpression(fmt.Sprintf("http://api.%s", *apiDomain))
+	apiRoute := NewRouteExpression(fmt.Sprintf("https://api.%s", *apiDomain))
 	apiProxyIntercept := func(h http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			interceptWriter := bufferedResponseWriter{w, 0, 0}
@@ -529,7 +529,7 @@ func main() {
 					// * Proxy-cache event-based notification systems
 					rs.ServeHTTP(res, req)
 
-				}, []string{"X-Loadbalancer: Golang-Accelerator"}, "http"), *logToStdout))
-	err = http.ListenAndServe(*listen, nil)
+				}, []string{"X-Loadbalancer: Golang-Accelerator"}, "https"), *logToStdout))
+	err = http.ListenAndServeTLS(*listen, "/etc/letsencrypt/live/clouddom.eu/fullchain.pem","/etc/letsencrypt/live/clouddom.eu/privkey.pem", nil)
 	log.Fatal(err)
 }
