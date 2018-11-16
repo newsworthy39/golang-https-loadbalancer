@@ -71,7 +71,7 @@ func TestProxyRulesFindTargetGroupByRouteExpression(t *testing.T) {
 
 	routeexpressions := new(util.List)
 	route := NewRouteExpression("http://localhost/")
-	route.AddTargetRule(NewProxyTargetRule("https://www.tuxand.me", 10))
+	route.AddTargetRule(NewProxyTargetRule(util.Backend { Backend: "https://www.tuxand.me" }, 10))
 	routeexpressions.Insert (*route)
 
 	t.Logf("* Testing Rule chain, Path: %s, Host: %s\n", req.URL.Path, fmt.Sprintf("%s://%s", req.URL.Scheme, req.URL.Host))
@@ -122,7 +122,7 @@ func TestCacheTargetRule(t *testing.T) {
 
 	routeexpressions := new(util.List)
 	route := NewRouteExpression("http://localhost/cache")
-	route.AddTargetRule(NewCacheTargetRule("http://www.tuxand.me"))
+	route.AddTargetRule(NewCacheTargetRule(util.Backend { Backend: "http://www.tuxand.me" }))
 	routeexpressions.Insert (*route)
 
 	t.Logf("* Testing Rule chain, Path: %s, Host: %s\n", req.URL.Path, fmt.Sprintf("%s://%s", req.URL.Scheme, req.URL.Host))
