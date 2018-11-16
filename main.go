@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 	"math/rand"
+	"text/template"
 )
 
 // externalIP
@@ -453,16 +454,17 @@ func main() {
 	logToStdout := flag.Bool("log", false, "Log to stdout.")
 	listen := flag.String("listen", fmt.Sprintf("%s:%d", host, 443), "Listen description.")
 	apiBackend := flag.String("apiBackend", "http://10.90.10.80", "Which backends to use for API-access.")
-	apiDomain := flag.String("apiDomain", "clouddom.eu", "What apex-domain is used for infrastructure.")
+	apiDomain := flag.String("apiDomain", "api.clouddom.eu", "What api-domain is used for infrastructure.")
 	secret := flag.String("secret", "", "The secret associated.")
 	access := flag.String("accesskey", "", "The access-key associated to use")
+	scheme  := flag.String("scheme","https", "The scheme this service is serving out")
 
 	flag.Parse()
 
 	apiconfig  := util.NewApiConfiguration(*apiDomain, *apiBackend, *secret, *access)
 
 	// Output some sensible information about operation.
-	fmt.Printf("Listen :%s, apiConfiguration: %+v \n", *listen, apiconfig)
+	fmt.Printf("Listen :%s, scheme: %s, apiConfiguration: %+v \n", *listen, *scheme,apiconfig)
 
 	// Create root-node in graph, and monkey-patch our configuration onto it.
 	routeexpressions := new(util.List)
@@ -471,7 +473,7 @@ func main() {
 	// match our own infrastructure. That is, requests going to apiDomain
 	// are sent to those systems. We extract the return-code, to know
 	// if we're supposed to check something ourselves.
-	apiRoute := NewRouteExpression(fmt.Sprintf("https://api.%s", *apiDomain))
+	apiRoute := NewRouteExpression(fmt.Sprintf("https://%s", *apiDomain))
 	apiProxyIntercept := func(h http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			interceptWriter := bufferedResponseWriter{w, 0, 0}
@@ -503,6 +505,9 @@ func main() {
 		fmt.Printf("Could not load configuration. Aborting.")
 	}
 
+	// This is used to output statuscode
+	tmpl := template.Must(template.ParseFiles("template/status.html"))
+
 	// Start webserver, capture apps and use that.
 	http.HandleFunc("/",
 		NCSALogger(
@@ -514,8 +519,15 @@ func main() {
 					rs, err := FindTargetGroupByRouteExpression(routeexpressions, req)
 					if err != nil {
 						// Deliver, not found, here is a problem to do sort-of-a-root-accounting.
-						res.WriteHeader(http.StatusNotFound)
-						res.Write([]byte(fmt.Sprintf("Not found (%s!).", req.URL.Path[1:])))
+						type HTTPStatusCode struct {
+							StatusCode int
+							Message string
+						}
+
+						status := HTTPStatusCode{404, "Not found"}
+						tmpl.Execute(res, status)
+						//res.WriteHeader(http.StatusNotFound)
+						//res.Write([]byte(fmt.Sprintf("Not found (%s!).", req.URL.Path[1:])))
 						return
 
 					}
@@ -529,7 +541,14 @@ func main() {
 					// * Proxy-cache event-based notification systems
 					rs.ServeHTTP(res, req)
 
-				}, []string{"X-Loadbalancer: Golang-Accelerator"}, "https"), *logToStdout))
-	err = http.ListenAndServeTLS(*listen, "/etc/letsencrypt/live/clouddom.eu/fullchain.pem","/etc/letsencrypt/live/clouddom.eu/privkey.pem", nil)
-	log.Fatal(err)
+				}, []string{"X-Loadbalancer: Golang-Accelerator", "Strict-Transport-Security: max-age=10"}, *scheme), *logToStdout))
+
+	if *scheme == "https" {
+		// Start the server-part up.
+		log.Fatal(http.ListenAndServeTLS(*listen, "/etc/letsencrypt/live/clouddom.eu/fullchain.pem","/etc/letsencrypt/live/clouddom.eu/privkey.pem", nil))
+	} else {
+		// Start the server-part up.
+		log.Fatal(http.ListenAndServe(*listen, nil))
+	}
+
 }
