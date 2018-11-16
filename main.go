@@ -506,7 +506,7 @@ func main() {
 	}
 
 	// This is used to output statuscode
-	tmpl := template.Must(template.ParseFiles("template/status.html"))
+	tmpl := template.Must(template.ParseFiles("templates/status.html"))
 
 	// Start webserver, capture apps and use that.
 	http.HandleFunc("/",
@@ -524,10 +524,9 @@ func main() {
 							Message string
 						}
 
-						status := HTTPStatusCode{404, "Not found"}
+						res.WriteHeader(http.StatusNotFound)
+						status := HTTPStatusCode{http.StatusNotFound, "Not found"}
 						tmpl.Execute(res, status)
-						//res.WriteHeader(http.StatusNotFound)
-						//res.Write([]byte(fmt.Sprintf("Not found (%s!).", req.URL.Path[1:])))
 						return
 
 					}
