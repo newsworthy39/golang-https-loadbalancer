@@ -427,7 +427,7 @@ func LoadConfiguration(apiConfig *util.ApiConfiguration, root *util.List) (error
 
 		// {Type:ProxyTarget Path:http://test.api.comf/api Loadbalancing:round-robin
 		// Backends:[https://www.tuxand.me]}
-		if route.Type == "ProxyTarget" {
+		if "proxytarget" == strings.ToLower(route.Type) {
 			rootRoute := NewRouteExpression(route.Path)
 			lb := NewLoadBalancer(route.Method)
 			for _, backend := range route.Backends {
