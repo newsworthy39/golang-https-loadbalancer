@@ -419,7 +419,10 @@ func FindTargetGroupByRouteExpression(routeexpressions *util.List, req *http.Req
 }
 
 func LoadConfiguration(apiConfig *util.ApiConfiguration, root *util.List) (error) {
-	routes := apiConfig.LoadConfigurationFromRESTApi()
+	routes, err := apiConfig.LoadConfigurationFromRESTApi()
+	if err != nil {
+		return err
+	}
 
 	for _, route := range routes {
 

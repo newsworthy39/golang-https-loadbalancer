@@ -30,7 +30,7 @@ func NewApiConfiguration(apiDomain string, apiBackend string, secret string, acc
 	return &ApiConfiguration{apiDomain, apiBackend, secret, accessKey}
 }
 
-func (a *ApiConfiguration) LoadConfigurationFromRESTApi() []route {
+func (a *ApiConfiguration) LoadConfigurationFromRESTApi() ([]route, error) {
 
 	path := fmt.Sprintf("%s/loadbalancer", a.apiBackend)
 
@@ -38,8 +38,7 @@ func (a *ApiConfiguration) LoadConfigurationFromRESTApi() []route {
 	routes := []route{}
 
 	if err != nil {
-		fmt.Printf("%s", err)
-		os.Exit(1)
+		return nil, err
 	} else {
 		req.Header.Set("AccessKey", a.accessKey)
 		req.Header.Set("Secret", a.secret)
@@ -52,8 +51,7 @@ func (a *ApiConfiguration) LoadConfigurationFromRESTApi() []route {
 
 		defer resp.Body.Close()
 		if resp.StatusCode != 200 {
-			fmt.Printf("Could not read configuration from API");
-			os.Exit(1)
+			fmt.Printf("Could not read configuration from API. Result: %d", resp.StatusCode);
 		}
 
 		contents, err := ioutil.ReadAll(resp.Body)
@@ -64,10 +62,11 @@ func (a *ApiConfiguration) LoadConfigurationFromRESTApi() []route {
 
 		if err = json.Unmarshal(contents, &routes); err != nil {
 			fmt.Printf("Configuration broken: %s", err)
+			return nil, err
 		}
 	}
 
-	return routes
+	return routes, nil
 }
 
 
