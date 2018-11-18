@@ -140,3 +140,6 @@ func TestCacheTargetRule(t *testing.T) {
 	t.Logf("Content-Type: %s\n", resp.Header.Get("Content-Type"))
 	t.Logf("Body: %s\n", string(body))
 }
+
+func TestLoadConfiguration(t *testing.T) {
+}
