@@ -8,9 +8,8 @@ import (
 	"os"
 )
 
-type ApiConfiguration struct {
-	apiDomain string
-	apiBackend string
+type JSONApiConfiguration struct {
+	JSONBackend string
 	secret string
 	accessKey string
 }
@@ -26,13 +25,13 @@ type route struct {
 	Backends      []Backend
 }
 
-func NewApiConfiguration(apiDomain string, apiBackend string, secret string, accessKey string) *ApiConfiguration {
-	return &ApiConfiguration{apiDomain, apiBackend, secret, accessKey}
+func NewJSONApiConfiguration(JSONBackend string, secret string, accessKey string) *JSONApiConfiguration {
+	return &JSONApiConfiguration{JSONBackend, secret, accessKey}
 }
 
-func (a *ApiConfiguration) LoadConfigurationFromRESTApi() ([]route, error) {
+func (a *JSONApiConfiguration) LoadConfigurationFromRESTApi() ([]route, error) {
 
-	path := fmt.Sprintf("%s/loadbalancer", a.apiBackend)
+	path := fmt.Sprintf("%s/loadbalancer", a.JSONBackend)
 
 	req, err := http.NewRequest("GET", path, nil)
 	routes := []route{}

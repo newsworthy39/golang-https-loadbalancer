@@ -20,6 +20,9 @@ import (
 	"text/template"
 )
 
+// Create root-node in graph, and monkey-patch our configuration onto it.
+var routeexpressions = new(util.List)
+
 // externalIP
 // Returns externalIP if possible, or err.
 // Memoize this function, to prevent excessive iterating.
@@ -175,7 +178,6 @@ func (p *ProxyTargetRule) ServeHTTP(res http.ResponseWriter, req *http.Request) 
 func (t *ProxyTargetRule) AddTargetRule(rule http.Handler) {
 	t.Next = &rule
 }
-
 
 type ContentTargetRule struct {
 	Content    string
@@ -418,7 +420,7 @@ func FindTargetGroupByRouteExpression(routeexpressions *util.List, req *http.Req
 
 }
 
-func LoadConfiguration(apiConfig *util.ApiConfiguration, root *util.List) (error) {
+func LoadConfiguration(apiConfig *util.JSONApiConfiguration, root *util.List) (error) {
 	routes, err := apiConfig.LoadConfigurationFromRESTApi()
 	if err != nil {
 		return err
@@ -440,6 +442,42 @@ func LoadConfiguration(apiConfig *util.ApiConfiguration, root *util.List) (error
 			rootRoute.AddTargetRule(lb)
 			root.Insert(*rootRoute)
 		}
+
+		if "apitarget" == strings.ToLower(route.Type) {
+
+			// Start api-part. We have hard-boiled api-hostnames in here, to
+			// match our own infrastructure. That is, requests going to apiDomain
+			// are sent to those systems. We extract the return-code, to know
+			// if we're supposed to check something ourselves.
+			apiProxyIntercept := func(h http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					interceptWriter := bufferedResponseWriter{w, 0, 0}
+					defer interceptWriter.Flush()
+
+					h.ServeHTTP(&interceptWriter, r)
+
+					if r.Method != http.MethodGet && interceptWriter.HTTPStatus == http.StatusOK {
+						log.Printf("Scheduling refresh, because of api-change. (%d)\n",
+							interceptWriter.HTTPStatus)
+
+						routeexpressions = new(util.List) // override
+						if err := LoadConfiguration(apiConfig, routeexpressions); err != nil {
+							fmt.Printf("Could not load configuration. Aborting.")
+						}
+					}
+				})
+			}
+
+			rootRoute := NewRouteExpression(route.Path)
+			lb := NewLoadBalancer(route.Method)
+			for _, backend := range route.Backends {
+				apiProxyRoute := NewProxyTargetRule(backend, 10)
+				lb.AddTargetRule(apiProxyIntercept(apiProxyRoute));
+			}
+			rootRoute.AddTargetRule(lb)
+			root.Insert(*rootRoute)
+		}
+
 	}
 
 	return nil
@@ -456,52 +494,17 @@ func main() {
 	// we will need some args, going here.
 	logToStdout := flag.Bool("log", false, "Log to stdout.")
 	listen := flag.String("listen", fmt.Sprintf("%s:%d", host, 443), "Listen description.")
-	apiBackend := flag.String("apiBackend", "http://10.90.10.80", "Which backends to use for API-access.")
-	apiDomain := flag.String("apiDomain", "api.clouddom.eu", "What api-domain is used for infrastructure.")
+	JSONApiBackend := flag.String("apibackend", "http://10.90.10.80:8080", "Initial configuration.")
 	secret := flag.String("secret", "", "The secret associated.")
 	access := flag.String("accesskey", "", "The access-key associated to use")
 	scheme  := flag.String("scheme","https", "The scheme this service is serving out")
 
 	flag.Parse()
 
-	apiconfig  := util.NewApiConfiguration(*apiDomain, *apiBackend, *secret, *access)
+	apiconfig  := util.NewJSONApiConfiguration(*JSONApiBackend, *secret, *access)
 
 	// Output some sensible information about operation.
 	fmt.Printf("Listen :%s, scheme: %s, apiConfiguration: %+v \n", *listen, *scheme,apiconfig)
-
-	// Create root-node in graph, and monkey-patch our configuration onto it.
-	routeexpressions := new(util.List)
-
-	// Start api-part. We have hard-boiled api-hostnames in here, to
-	// match our own infrastructure. That is, requests going to apiDomain
-	// are sent to those systems. We extract the return-code, to know
-	// if we're supposed to check something ourselves.
-	apiRoute := NewRouteExpression(fmt.Sprintf("https://%s", *apiDomain))
-	apiProxyIntercept := func(h http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			interceptWriter := bufferedResponseWriter{w, 0, 0}
-			defer interceptWriter.Flush()
-
-			h.ServeHTTP(&interceptWriter, r)
-
-			if r.Method != http.MethodGet && interceptWriter.HTTPStatus == http.StatusOK {
-				log.Printf("Scheduling refresh, because of api-change. (%d)\n",
-					interceptWriter.HTTPStatus)
-
-				routeexpressions = new(util.List) // override
-				routeexpressions.Insert(*apiRoute) // Copy the api-node.
-
-				// Create root-node in graph, and monkey-patch our configuration onto it.
-				if err := LoadConfiguration(apiconfig, routeexpressions); err != nil {
-					fmt.Printf("Could not load configuration. Aborting.")
-				}
-
-			}
-		})
-	}
-	apiProxyRoute := NewProxyTargetRule(util.Backend{Backend :*apiBackend}, 10)
-	apiRoute.AddTargetRule(apiProxyIntercept(apiProxyRoute))
-	routeexpressions.Insert(*apiRoute)
 
 	// Create root-node in graph, and monkey-patch our configuration onto it.
 	if err := LoadConfiguration(apiconfig, routeexpressions); err != nil {
