@@ -456,7 +456,7 @@ func LoadConfiguration(apiConfig *util.JSONApiConfiguration, root *util.List) (e
 
 					h.ServeHTTP(&interceptWriter, r)
 
-					if r.Method != http.MethodGet && interceptWriter.HTTPStatus == http.StatusOK {
+					if r.Method != http.MethodGet && ( interceptWriter.HTTPStatus == http.StatusOK|| interceptWriter.HTTPStatus == http.StatusNoContent ) { 
 						log.Printf("Scheduling refresh, because of api-change. (%d)\n",
 							interceptWriter.HTTPStatus)
 
