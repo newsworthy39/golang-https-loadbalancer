@@ -462,8 +462,18 @@ func LoadConfiguration(apiConfig *util.JSONApiConfiguration, root *util.List) (e
 
 						routeexpressions = new(util.List) // override
 						if err := LoadConfiguration(apiConfig, routeexpressions); err != nil {
-							fmt.Printf("Could not load configuration. Aborting.")
+							event := util.NewEvent(400, "Could not load configuration")
+							fmt.Printf(event.EventData)
+							apiConfig.SendEvent(event)
 						}
+
+						event := util.NewEvent(200, "ConfigurationRefreshOK")
+
+						// TODO: Change this, to be sent to the event-backend
+						// if the SDK support its.
+						// 
+						apiConfig.SendEvent(event)
+
 					}
 				})
 			}
