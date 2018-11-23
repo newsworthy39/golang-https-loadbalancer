@@ -59,6 +59,16 @@ func ShowBackwards(list *Node) {
 	}
 }
 
+func (l *List) Erase(callback func(*interface{})) *List{
+	list := l.head
+	for list != nil {
+		callback(&list.key)
+		list = list.next
+	}
+
+	return new(List)
+}
+
 func (l *List) Find(pred func(*interface{}) bool) (*interface{}, error) {
 	list := l.head
 	for list != nil {

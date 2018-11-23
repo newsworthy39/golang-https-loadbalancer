@@ -25,6 +25,7 @@ import (
 
 // Create root-node in graph, and monkey-patch our configuration onto it.
 var routeexpressions = new(util.List)
+var timers = new(util.List)
 
 // externalIP
 // Returns externalIP if possible, or err.
@@ -440,7 +441,16 @@ func healthcheck(lb *LoadBalancer, apiConfig *sdk.JSONApiConfiguration, path str
 
 }
 
-func LoadConfiguration(apiConfig *sdk.JSONApiConfiguration, root *util.List) (error) {
+
+func LoadConfiguration(apiConfig *sdk.JSONApiConfiguration) (error) {
+
+	// start by cleaning all timers
+	timers = timers.Erase(func(key *interface{})  {
+                ticker := (*key).(*time.Ticker)
+		fmt.Printf("Stopping timer %s.\n", ticker)
+		ticker.Stop()
+        })
+
 	routes, err := apiConfig.LoadbalancerConfigurationFromRESTApi()
 	if err != nil {
 		return err
@@ -468,10 +478,11 @@ func LoadConfiguration(apiConfig *sdk.JSONApiConfiguration, root *util.List) (er
 					fmt.Println(now, "check result", healthcheck(lb, apiConfig, path, status), "==", status )
 				}
 			    }()
+			  timers.Insert(ticker)
 			}
 
 			rootRoute.AddTargetRule(lb)
-			root.Insert(*rootRoute)
+			routeexpressions.Insert(*rootRoute)
 		}
 
 		if "apitarget" == strings.ToLower(route.Type) {
@@ -495,7 +506,7 @@ func LoadConfiguration(apiConfig *sdk.JSONApiConfiguration, root *util.List) (er
 
 						eventConfig,_ := sdk.NewJSONApiConfigurationBackend("cph0", *apiConfig)
 						routeexpressions = new(util.List) // override
-						if err := LoadConfiguration(apiConfig, routeexpressions); err != nil {
+						if err := LoadConfiguration(apiConfig); err != nil {
 							if (apiConfig.SupportsEvents()) {
 								event := sdk.NewEvent(400, "Could not load configuration")
 								eventConfig.SendEvent(event)
@@ -521,7 +532,7 @@ func LoadConfiguration(apiConfig *sdk.JSONApiConfiguration, root *util.List) (er
 				lb.AddTargetRule(apiProxyIntercept(apiProxyRoute));
 			}
 			rootRoute.AddTargetRule(lb)
-			root.Insert(*rootRoute)
+			routeexpressions.Insert(*rootRoute)
 		}
 
 	}
@@ -559,7 +570,7 @@ func main() {
 	fmt.Printf("Listen :%s, scheme: %s, apiConfiguration: %+v \n", *listen, *scheme,apiconfig)
 
 	// Create root-node in graph, and monkey-patch our configuration onto it.
-	if err := LoadConfiguration(&apiconfig, routeexpressions); err != nil {
+	if err := LoadConfiguration(&apiconfig); err != nil {
 		fmt.Printf("Could not load configuration. Aborting.")
 	}
 
