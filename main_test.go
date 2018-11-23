@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"github.com/newsworthy39/golang-https-loadbalancer/util"
+	sdk "github.com/newsworthy39/golang-clouddom-sdk"
 )
 
 func TestFindTargetGroupByRouteExpression(t *testing.T) {
@@ -71,7 +72,7 @@ func TestProxyRulesFindTargetGroupByRouteExpression(t *testing.T) {
 
 	routeexpressions := new(util.List)
 	route := NewRouteExpression("http://localhost/")
-	route.AddTargetRule(NewProxyTargetRule(util.Backend { Backend: "https://www.tuxand.me" }, 10))
+	route.AddTargetRule(NewProxyTargetRule(sdk.Backend { Backend: "https://www.tuxand.me" }, 10))
 	routeexpressions.Insert (*route)
 
 	t.Logf("* Testing Rule chain, Path: %s, Host: %s\n", req.URL.Path, fmt.Sprintf("%s://%s", req.URL.Scheme, req.URL.Host))
@@ -122,7 +123,7 @@ func TestCacheTargetRule(t *testing.T) {
 
 	routeexpressions := new(util.List)
 	route := NewRouteExpression("http://localhost/cache")
-	route.AddTargetRule(NewCacheTargetRule(util.Backend { Backend: "http://www.tuxand.me" }))
+	route.AddTargetRule(NewCacheTargetRule(sdk.Backend { Backend: "http://www.tuxand.me" }))
 	routeexpressions.Insert (*route)
 
 	t.Logf("* Testing Rule chain, Path: %s, Host: %s\n", req.URL.Path, fmt.Sprintf("%s://%s", req.URL.Scheme, req.URL.Host))
@@ -139,7 +140,4 @@ func TestCacheTargetRule(t *testing.T) {
 	t.Logf("Status: %d\n", resp.StatusCode)
 	t.Logf("Content-Type: %s\n", resp.Header.Get("Content-Type"))
 	t.Logf("Body: %s\n", string(body))
-}
-
-func TestLoadConfiguration(t *testing.T) {
 }

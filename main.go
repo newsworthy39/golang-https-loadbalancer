@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"errors"
 	"fmt"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	"flag"
 	"github.com/BenLubar/memoize"
 	"github.com/newsworthy39/golang-https-loadbalancer/util"
+	sdk "github.com/newsworthy39/golang-clouddom-sdk"
 	"net"
 	"net/url"
 	"strings"
@@ -106,7 +108,7 @@ type ProxyTargetRule struct {
 	Next                     *http.Handler
 }
 
-func NewProxyTargetRule(Destination util.Backend, MaxBackends int) *ProxyTargetRule {
+func NewProxyTargetRule(Destination sdk.Backend, MaxBackends int) *ProxyTargetRule {
 	return &ProxyTargetRule{Target: Destination.Backend,
 		MaxBackendConnections: MaxBackends}
 }
@@ -246,7 +248,7 @@ type CacheTargetRule struct {
 	Next *http.Handler
 }
 
-func NewCacheTargetRule(Destination util.Backend) *CacheTargetRule {
+func NewCacheTargetRule(Destination sdk.Backend) *CacheTargetRule {
 	target := NewProxyTargetRule(Destination, 10)
 	rule := CacheTargetRule{IsNew: true}
 	rule.AddTargetRule(target)
@@ -420,7 +422,7 @@ func FindTargetGroupByRouteExpression(routeexpressions *util.List, req *http.Req
 
 }
 
-func LoadConfiguration(apiConfig *util.JSONApiConfiguration, root *util.List) (error) {
+func LoadConfiguration(apiConfig *sdk.JSONApiConfiguration, root *util.List) (error) {
 	routes, err := apiConfig.LoadConfigurationFromRESTApi()
 	if err != nil {
 		return err
@@ -462,12 +464,14 @@ func LoadConfiguration(apiConfig *util.JSONApiConfiguration, root *util.List) (e
 
 						routeexpressions = new(util.List) // override
 						if err := LoadConfiguration(apiConfig, routeexpressions); err != nil {
-							event := util.NewEvent(400, "Could not load configuration")
-							fmt.Printf(event.EventData)
-							apiConfig.SendEvent(event)
+							if (apiConfig.SupportsEvents()) {
+								event := sdk.NewEvent(400, "Could not load configuration")
+								fmt.Printf(event.EventData)
+								apiConfig.SendEvent(event)
+							}
 						}
 
-						event := util.NewEvent(200, "ConfigurationRefreshOK")
+						event := sdk.NewEvent(200, "ConfigurationRefreshOK")
 
 						// TODO: Change this, to be sent to the event-backend
 						// if the SDK support its.
@@ -511,13 +515,19 @@ func main() {
 
 	flag.Parse()
 
-	apiconfig  := util.NewJSONApiConfiguration(*JSONApiBackend, *secret, *access)
+	apiconfig, err  := sdk.NewJSONApiConfiguration(*JSONApiBackend, *secret, *access)
+	if err != nil {
+		// Output some sensible information about operation.
+		fmt.Printf("Invalid api-configuration: %s.\n", err)
+		os.Exit(1)
+	}
+
 
 	// Output some sensible information about operation.
 	fmt.Printf("Listen :%s, scheme: %s, apiConfiguration: %+v \n", *listen, *scheme,apiconfig)
 
 	// Create root-node in graph, and monkey-patch our configuration onto it.
-	if err := LoadConfiguration(apiconfig, routeexpressions); err != nil {
+	if err := LoadConfiguration(&apiconfig, routeexpressions); err != nil {
 		fmt.Printf("Could not load configuration. Aborting.")
 	}
 
