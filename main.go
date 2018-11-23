@@ -505,7 +505,10 @@ func LoadConfiguration(apiConfig *sdk.JSONApiConfiguration) (error) {
 							interceptWriter.HTTPStatus)
 
 						eventConfig,_ := sdk.NewJSONApiConfigurationBackend("cph0", *apiConfig)
-						routeexpressions = new(util.List) // override
+						routeexpressions = routeexpressions.Erase(func(key *interface{}) {
+							// TODO: fmt.Printf("Do stuff")
+						})
+
 						if err := LoadConfiguration(apiConfig); err != nil {
 							if (apiConfig.SupportsEvents()) {
 								event := sdk.NewEvent(400, "Could not load configuration")
