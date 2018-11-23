@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/http/httptest"
 	//	"regexp"
 	"flag"
 	"github.com/BenLubar/memoize"
@@ -422,6 +423,23 @@ func FindTargetGroupByRouteExpression(routeexpressions *util.List, req *http.Req
 
 }
 
+func healthcheck(lb *LoadBalancer, apiConfig *sdk.JSONApiConfiguration, path string, expectedStatusCode int) int {
+
+
+	eventConfig, _ := sdk.NewJSONApiConfigurationBackend("cph0", *apiConfig)
+        req := httptest.NewRequest("GET", path, nil)
+	res := httptest.NewRecorder()
+        lb.ServeHTTP(res,req)
+
+	if (apiConfig.SupportsEvents() && res.Code != expectedStatusCode) {
+		event := sdk.NewEvent(1000, "HealthcheckFailed")
+		eventConfig.SendEvent(event)
+	}
+
+	return res.Code
+
+}
+
 func LoadConfiguration(apiConfig *sdk.JSONApiConfiguration, root *util.List) (error) {
 	routes, err := apiConfig.LoadbalancerConfigurationFromRESTApi()
 	if err != nil {
@@ -430,15 +448,26 @@ func LoadConfiguration(apiConfig *sdk.JSONApiConfiguration, root *util.List) (er
 
 	for _, route := range routes {
 
-		fmt.Printf("%+v", route);
-
 		// {Type:ProxyTarget Path:http://test.api.comf/api Loadbalancing:round-robin
 		// Backends:[https://www.tuxand.me]}
 		if "proxytarget" == strings.ToLower(route.Type) {
 			rootRoute := NewRouteExpression(route.Path)
 			lb := NewLoadBalancer(route.Method)
+
 			for _, backend := range route.Backends {
 				lb.AddTargetRule(NewProxyTargetRule(backend, 10))
+			}
+
+			if route.HealthcheckActive == 1 {
+			  var path = route.HealthcheckPath
+			  var status = route.HealthcheckStatus
+
+			  ticker := time.NewTicker(time.Duration(route.HealthcheckInterval) * time.Second)
+			    go func() {
+				for now := range ticker.C {
+					fmt.Println(now, "check result", healthcheck(lb, apiConfig, path, status), "==", status )
+				}
+			    }()
 			}
 
 			rootRoute.AddTargetRule(lb)
@@ -458,7 +487,9 @@ func LoadConfiguration(apiConfig *sdk.JSONApiConfiguration, root *util.List) (er
 
 					h.ServeHTTP(&interceptWriter, r)
 
-					if r.Method != http.MethodGet && ( interceptWriter.HTTPStatus == http.StatusOK|| interceptWriter.HTTPStatus == http.StatusNoContent ) { 
+					if r.Method != http.MethodGet &&
+						( interceptWriter.HTTPStatus == http.StatusOK || interceptWriter.HTTPStatus == http.StatusNoContent ) {
+
 						log.Printf("Scheduling refresh, because of api-change. (%d)\n",
 							interceptWriter.HTTPStatus)
 
@@ -568,6 +599,8 @@ func main() {
 					rs.ServeHTTP(res, req)
 
 				}, []string{"X-Loadbalancer: Golang-Accelerator", "Strict-Transport-Security: max-age=10"}, *scheme), *logToStdout))
+
+	
 
 	if *scheme == "https" {
 		// Start the server-part up.
