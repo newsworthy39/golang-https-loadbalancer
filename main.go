@@ -423,7 +423,7 @@ func FindTargetGroupByRouteExpression(routeexpressions *util.List, req *http.Req
 }
 
 func LoadConfiguration(apiConfig *sdk.JSONApiConfiguration, root *util.List) (error) {
-	routes, err := apiConfig.LoadConfigurationFromRESTApi()
+	routes, err := apiConfig.LoadbalancerConfigurationFromRESTApi()
 	if err != nil {
 		return err
 	}
