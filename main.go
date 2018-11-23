@@ -27,6 +27,14 @@ import (
 var routeexpressions = new(util.List)
 var timers = new(util.List)
 
+// This is used to output statuscode
+var tmpl = template.Must(template.ParseFiles("templates/status.html"))
+
+type HTTPStatusCode struct {
+	StatusCode int
+	Message string
+}
+
 // externalIP
 // Returns externalIP if possible, or err.
 // Memoize this function, to prevent excessive iterating.
@@ -354,6 +362,11 @@ func (l *LoadBalancer) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	if l.Count != 0 {
 		candidate := SelectStrategy(l)
 		(*(l.Next[candidate])).ServeHTTP(res, req)
+	} else {
+		res.WriteHeader(http.StatusInternalServerError)
+		status := HTTPStatusCode{http.StatusInternalServerError, "No backends available"}
+		tmpl.Execute(res, status)
+		return
 	}
 }
 
@@ -577,9 +590,6 @@ func main() {
 		fmt.Printf("Could not load configuration. Aborting.")
 	}
 
-	// This is used to output statuscode
-	tmpl := template.Must(template.ParseFiles("templates/status.html"))
-
 	// Start webserver, capture apps and use that.
 	http.HandleFunc("/",
 		NCSALogger(
@@ -591,11 +601,6 @@ func main() {
 					rs, err := FindTargetGroupByRouteExpression(routeexpressions, req)
 					if err != nil {
 						// Deliver, not found, here is a problem to do sort-of-a-root-accounting.
-						type HTTPStatusCode struct {
-							StatusCode int
-							Message string
-						}
-
 						res.WriteHeader(http.StatusNotFound)
 						status := HTTPStatusCode{http.StatusNotFound, "Not found"}
 						tmpl.Execute(res, status)
