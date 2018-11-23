@@ -462,21 +462,22 @@ func LoadConfiguration(apiConfig *sdk.JSONApiConfiguration, root *util.List) (er
 						log.Printf("Scheduling refresh, because of api-change. (%d)\n",
 							interceptWriter.HTTPStatus)
 
+						eventConfig,_ := sdk.NewJSONApiConfigurationBackend("cph0", *apiConfig)
 						routeexpressions = new(util.List) // override
 						if err := LoadConfiguration(apiConfig, routeexpressions); err != nil {
 							if (apiConfig.SupportsEvents()) {
 								event := sdk.NewEvent(400, "Could not load configuration")
-								fmt.Printf(event.EventData)
-								apiConfig.SendEvent(event)
+								eventConfig.SendEvent(event)
 							}
 						}
-
-						event := sdk.NewEvent(200, "ConfigurationRefreshOK")
 
 						// TODO: Change this, to be sent to the event-backend
 						// if the SDK support its.
 						// 
-						apiConfig.SendEvent(event)
+						if (apiConfig.SupportsEvents()) {
+							event := sdk.NewEvent(200, "ConfigurationRefreshOK")
+							eventConfig.SendEvent(event)
+						}
 
 					}
 				})
