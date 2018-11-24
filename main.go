@@ -520,7 +520,7 @@ func LoadConfiguration(apiConfig *sdk.JSONApiConfiguration, routeexpr *util.List
 
 						expr  := new(util.List)
 						if err := LoadConfiguration(apiConfig, expr); err != nil {
-							if (apiConfig.SupportsEvents()) {
+							if (eventConfig.SupportsEvents()) {
 								event := sdk.NewEvent(400, "Could not load configuration")
 								eventConfig.SendEvent(event)
 							}
@@ -529,7 +529,7 @@ func LoadConfiguration(apiConfig *sdk.JSONApiConfiguration, routeexpr *util.List
 						// TODO: Change this, to be sent to the event-backend
 						// if the SDK support its.
 						// 
-						if (apiConfig.SupportsEvents()) {
+						if (eventConfig.SupportsEvents()) {
 							event := sdk.NewEvent(200, "ConfigurationRefreshOK")
 							eventConfig.SendEvent(event)
 						}
