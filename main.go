@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"errors"
 	"fmt"
 	"sync"
@@ -439,8 +438,8 @@ func FindTargetGroupByRouteExpression(routeexpressions *util.List, req *http.Req
 
 func healthcheck(lb *LoadBalancer, apiConfig *sdk.JSONApiConfiguration, path string, expectedStatusCode int) int {
 
+	eventConfig := apiConfig.NewEventAPIConfiguration()
 
-	eventConfig, _ := sdk.NewJSONApiConfigurationBackend("cph0", *apiConfig)
         req := httptest.NewRequest("GET", path, nil)
 	res := httptest.NewRecorder()
         lb.ServeHTTP(res,req)
@@ -455,7 +454,7 @@ func healthcheck(lb *LoadBalancer, apiConfig *sdk.JSONApiConfiguration, path str
 }
 
 
-func LoadConfiguration(apiConfig *sdk.JSONApiConfiguration) (error) {
+func LoadConfiguration(apiConfig *sdk.JSONApiConfiguration, routeexpr *util.List) (error) {
 
 	// start by cleaning all timers
 	timers = timers.Erase(func(key *interface{})  {
@@ -517,12 +516,10 @@ func LoadConfiguration(apiConfig *sdk.JSONApiConfiguration) (error) {
 						log.Printf("Scheduling refresh, because of api-change. (%d)\n",
 							interceptWriter.HTTPStatus)
 
-						eventConfig,_ := sdk.NewJSONApiConfigurationBackend("cph0", *apiConfig)
-						routeexpressions = routeexpressions.Erase(func(key *interface{}) {
-							// TODO: fmt.Printf("Do stuff")
-						})
+						eventConfig := apiConfig.NewEventAPIConfiguration()
 
-						if err := LoadConfiguration(apiConfig); err != nil {
+						expr  := new(util.List)
+						if err := LoadConfiguration(apiConfig, expr); err != nil {
 							if (apiConfig.SupportsEvents()) {
 								event := sdk.NewEvent(400, "Could not load configuration")
 								eventConfig.SendEvent(event)
@@ -537,6 +534,9 @@ func LoadConfiguration(apiConfig *sdk.JSONApiConfiguration) (error) {
 							eventConfig.SendEvent(event)
 						}
 
+						// Flip global route-expressions.
+						routeexpressions = expr;
+
 					}
 				})
 			}
@@ -548,7 +548,7 @@ func LoadConfiguration(apiConfig *sdk.JSONApiConfiguration) (error) {
 				lb.AddTargetRule(apiProxyIntercept(apiProxyRoute));
 			}
 			rootRoute.AddTargetRule(lb)
-			routeexpressions.Insert(*rootRoute)
+			routeexpr.Insert(*rootRoute)
 		}
 
 	}
@@ -567,26 +567,21 @@ func main() {
 	// we will need some args, going here.
 	logToStdout := flag.Bool("log", false, "Log to stdout.")
 	listen := flag.String("listen", fmt.Sprintf("%s:%d", host, 443), "Listen description.")
-	JSONApiBackend := flag.String("apibackend", "http://10.90.10.80:8080", "Initial configuration.")
+
+	region := flag.String("region", "cph0", "What region to use (or http-endpoint)")
 	secret := flag.String("secret", "", "The secret associated.")
 	access := flag.String("accesskey", "", "The access-key associated to use")
-	scheme  := flag.String("scheme","https", "The scheme this service is serving out")
 
+	scheme  := flag.String("scheme","https", "The scheme this service is serving out")
 	flag.Parse()
 
-	apiconfig, err  := sdk.NewJSONApiConfiguration(*JSONApiBackend, *secret, *access)
-	if err != nil {
-		// Output some sensible information about operation.
-		fmt.Printf("Invalid api-configuration: %s.\n", err)
-		os.Exit(1)
-	}
-
+	apiconfig := sdk.NewApiConfiguration(*region, *secret, *access)
 
 	// Output some sensible information about operation.
 	fmt.Printf("Listen :%s, scheme: %s, apiConfiguration: %+v \n", *listen, *scheme,apiconfig)
 
 	// Create root-node in graph, and monkey-patch our configuration onto it.
-	if err := LoadConfiguration(&apiconfig); err != nil {
+	if err := LoadConfiguration(apiconfig, routeexpressions); err != nil {
 		fmt.Printf("Could not load configuration. Aborting.")
 	}
 
@@ -618,8 +613,6 @@ func main() {
 					rs.ServeHTTP(res, req)
 
 				}, []string{"X-Loadbalancer: Golang-Accelerator", "Strict-Transport-Security: max-age=10"}, *scheme), *logToStdout))
-
-	
 
 	if *scheme == "https" {
 		// Start the server-part up.
