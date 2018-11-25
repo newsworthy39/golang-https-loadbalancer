@@ -478,13 +478,15 @@ func LoadConfiguration(apiConfig *sdk.APIContext, Routes []sdk.Route, rootList *
 			}
 
 			if Route.HealthcheckActive == 1 {
-			  var path = Route.HealthcheckPath
-			  var status = Route.HealthcheckStatus
-
 			  ticker := time.NewTicker(time.Duration(Route.HealthcheckInterval) * time.Second)
 			    go func() {
 				for now := range ticker.C {
-					fmt.Printf("%s %s %d==%d", now, path, healthcheck(lb, apiConfig, path, status), status)
+					fmt.Printf("%s %s %s %d==%d.\n",
+						now,
+						rootRoute.Path,
+						Route.HealthcheckPath,
+						healthcheck(lb, apiConfig, Route.HealthcheckPath, Route.HealthcheckStatus),
+						Route.HealthcheckStatus)
 				}
 			    }()
 			  timers.Insert(ticker)
