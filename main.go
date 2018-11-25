@@ -484,7 +484,7 @@ func LoadConfiguration(apiConfig *sdk.APIContext, Routes []sdk.Route, rootList *
 			  ticker := time.NewTicker(time.Duration(Route.HealthcheckInterval) * time.Second)
 			    go func() {
 				for now := range ticker.C {
-					fmt.Println(now, "check result", healthcheck(lb, apiConfig, path, status), "==", status )
+					fmt.Printf("%s %s %d==%d", now, path, healthcheck(lb, apiConfig, path, status), status)
 				}
 			    }()
 			  timers.Insert(ticker)
