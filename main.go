@@ -23,7 +23,7 @@ import (
 )
 
 // Create root-node in graph, and monkey-patch our configuration onto it.
-var routeexpressions = new(util.List)
+var Routeexpressions = new(util.List)
 var timers = new(util.List)
 
 // This is used to output statuscode
@@ -300,9 +300,9 @@ type RouteExpression struct {
 }
 
 func NewRouteExpression(Path string) *RouteExpression {
-	route := new(RouteExpression)
-	route.Path = Path
-	return route
+	Route := new(RouteExpression)
+	Route.Path = Path
+	return Route
 }
 
 func (r *RouteExpression) ServeHTTP(res http.ResponseWriter, req *http.Request) {
@@ -416,12 +416,12 @@ func EnsureProtocolHeaders(next http.HandlerFunc, Headers []string, Scheme strin
 	}
 }
 
-func FindTargetGroupByRouteExpression(routeexpressions *util.List, req *http.Request) (*RouteExpression, error) {
+func FindTargetGroupByRouteExpression(Routeexpressions *util.List, req *http.Request) (*RouteExpression, error) {
 
-	rs, err := routeexpressions.Find(func(key *interface{}) bool {
-		routeExpression := (*key).(RouteExpression)
+	rs, err := Routeexpressions.Find(func(key *interface{}) bool {
+		RouteExpression := (*key).(RouteExpression)
 		if strings.HasPrefix(fmt.Sprintf("%s://%s%s", req.URL.Scheme,
-			req.Host, req.URL.Path), routeExpression.Path) {
+			req.Host, req.URL.Path), RouteExpression.Path) {
 			return true
 		}
 		return false
@@ -436,17 +436,17 @@ func FindTargetGroupByRouteExpression(routeexpressions *util.List, req *http.Req
 
 }
 
-func healthcheck(lb *LoadBalancer, apiConfig *sdk.JSONApiConfiguration, path string, expectedStatusCode int) int {
+func healthcheck(lb *LoadBalancer, apiConfig *sdk.APIContext, path string, expectedStatusCode int) int {
 
-	eventConfig := apiConfig.NewEventAPIConfiguration()
+	eventContext := apiConfig.NewEventAPIContext()
 
         req := httptest.NewRequest("GET", path, nil)
 	res := httptest.NewRecorder()
         lb.ServeHTTP(res,req)
 
-	if (apiConfig.SupportsEvents() && res.Code != expectedStatusCode) {
+	if (eventContext.Supports() && res.Code != expectedStatusCode) {
 		event := sdk.NewEvent(1000, "HealthcheckFailed")
-		eventConfig.SendEvent(event)
+		eventContext.SendEvent(event)
 	}
 
 	return res.Code
@@ -454,7 +454,7 @@ func healthcheck(lb *LoadBalancer, apiConfig *sdk.JSONApiConfiguration, path str
 }
 
 
-func LoadConfiguration(apiConfig *sdk.JSONApiConfiguration, routeexpr *util.List) (error) {
+func LoadConfiguration(apiConfig *sdk.APIContext, Routes []sdk.Route, rootList *util.List) (error) {
 
 	// start by cleaning all timers
 	timers = timers.Erase(func(key *interface{})  {
@@ -463,28 +463,24 @@ func LoadConfiguration(apiConfig *sdk.JSONApiConfiguration, routeexpr *util.List
 		ticker.Stop()
         })
 
-	routes, err := apiConfig.LoadbalancerConfigurationFromRESTApi()
-	if err != nil {
-		return err
-	}
-
-	for _, route := range routes {
+	// Loadconfiguration, from Routes.
+	for _, Route := range Routes {
 
 		// {Type:ProxyTarget Path:http://test.api.comf/api Loadbalancing:round-robin
 		// Backends:[https://www.tuxand.me]}
-		if "proxytarget" == strings.ToLower(route.Type) {
-			rootRoute := NewRouteExpression(route.Path)
-			lb := NewLoadBalancer(route.Method)
+		if "proxytarget" == strings.ToLower(Route.Type) {
+			rootRoute := NewRouteExpression(Route.Path)
+			lb := NewLoadBalancer(Route.Method)
 
-			for _, backend := range route.Backends {
+			for _, backend := range Route.Backends {
 				lb.AddTargetRule(NewProxyTargetRule(backend, 10))
 			}
 
-			if route.HealthcheckActive == 1 {
-			  var path = route.HealthcheckPath
-			  var status = route.HealthcheckStatus
+			if Route.HealthcheckActive == 1 {
+			  var path = Route.HealthcheckPath
+			  var status = Route.HealthcheckStatus
 
-			  ticker := time.NewTicker(time.Duration(route.HealthcheckInterval) * time.Second)
+			  ticker := time.NewTicker(time.Duration(Route.HealthcheckInterval) * time.Second)
 			    go func() {
 				for now := range ticker.C {
 					fmt.Println(now, "check result", healthcheck(lb, apiConfig, path, status), "==", status )
@@ -494,10 +490,10 @@ func LoadConfiguration(apiConfig *sdk.JSONApiConfiguration, routeexpr *util.List
 			}
 
 			rootRoute.AddTargetRule(lb)
-			routeexpressions.Insert(*rootRoute)
+			rootList.Insert(*rootRoute)
 		}
 
-		if "apitarget" == strings.ToLower(route.Type) {
+		if "apitarget" == strings.ToLower(Route.Type) {
 
 			// Start api-part. We have hard-boiled api-hostnames in here, to
 			// match our own infrastructure. That is, requests going to apiDomain
@@ -516,39 +512,46 @@ func LoadConfiguration(apiConfig *sdk.JSONApiConfiguration, routeexpr *util.List
 						log.Printf("Scheduling refresh, because of api-change. (%d)\n",
 							interceptWriter.HTTPStatus)
 
-						eventConfig := apiConfig.NewEventAPIConfiguration()
+						eventConfig := apiConfig.NewEventAPIContext()
 
-						expr  := new(util.List)
-						if err := LoadConfiguration(apiConfig, expr); err != nil {
-							if (eventConfig.SupportsEvents()) {
-								event := sdk.NewEvent(400, "Could not load configuration")
+						// When dealing with reloads, we use the REST-api
+						lbConfig := apiConfig.NewLoadbalancerAPIContext()
+						RoutesREST, err := lbConfig.LoadbalancerConfigurationFromRESTApi()
+
+						// if no errors, then reload. If not. Do nothing.
+						if err == nil {
+
+							newRootList  := new(util.List)
+							if err := LoadConfiguration(apiConfig, RoutesREST, newRootList); err != nil {
+								if (eventConfig.Supports()) {
+									event := sdk.NewEvent(400, "Could not load configuration")
+									eventConfig.SendEvent(event)
+								}
+							}
+
+							// TODO: Change this, to be sent to the event-backend
+							// if the SDK support its.
+							// 
+							if (eventConfig.Supports()) {
+								event := sdk.NewEvent(200, "ConfigurationRefreshOK")
 								eventConfig.SendEvent(event)
 							}
+
+							// Flip global Route-expressions. (critical region)
+							Routeexpressions = rootList;
 						}
-
-						// TODO: Change this, to be sent to the event-backend
-						// if the SDK support its.
-						// 
-						if (eventConfig.SupportsEvents()) {
-							event := sdk.NewEvent(200, "ConfigurationRefreshOK")
-							eventConfig.SendEvent(event)
-						}
-
-						// Flip global route-expressions.
-						routeexpressions = expr;
-
 					}
 				})
 			}
 
-			rootRoute := NewRouteExpression(route.Path)
-			lb := NewLoadBalancer(route.Method)
-			for _, backend := range route.Backends {
+			rootRoute := NewRouteExpression(Route.Path)
+			lb := NewLoadBalancer(Route.Method)
+			for _, backend := range Route.Backends {
 				apiProxyRoute := NewProxyTargetRule(backend, 10)
 				lb.AddTargetRule(apiProxyIntercept(apiProxyRoute));
 			}
 			rootRoute.AddTargetRule(lb)
-			routeexpr.Insert(*rootRoute)
+			rootList.Insert(*rootRoute)
 		}
 
 	}
@@ -567,22 +570,43 @@ func main() {
 	// we will need some args, going here.
 	logToStdout := flag.Bool("log", false, "Log to stdout.")
 	listen := flag.String("listen", fmt.Sprintf("%s:%d", host, 443), "Listen description.")
-
-	region := flag.String("region", "cph0", "What region to use (or http-endpoint)")
+	region := flag.String("region", "cph", "What region to use (or http-endpoint)")
 	secret := flag.String("secret", "", "The secret associated.")
 	access := flag.String("accesskey", "", "The access-key associated to use")
-
+	initialJSON := flag.String("initialJSON", "unset", "The initial-configuration to use, encoded as JSON.")
 	scheme  := flag.String("scheme","https", "The scheme this service is serving out")
+
 	flag.Parse()
 
-	apiconfig := sdk.NewApiConfiguration(*region, *secret, *access)
+	// We don't specify a service in the beginning. It holds info about the context, w/o service.
+	context := sdk.NewAPIContext("", *region, *secret, *access)
 
 	// Output some sensible information about operation.
-	fmt.Printf("Listen :%s, scheme: %s, apiConfiguration: %+v \n", *listen, *scheme,apiconfig)
+	fmt.Printf("Listen :%s, scheme: %s, apiConfiguration: %+v \n", *listen, *scheme,context)
 
 	// Create root-node in graph, and monkey-patch our configuration onto it.
-	if err := LoadConfiguration(apiconfig, routeexpressions); err != nil {
-		fmt.Printf("Could not load configuration. Aborting.")
+	if *initialJSON  != "unset" {
+		initialRoutes, err := sdk.LoadbalancerConfigurationFromFile(*initialJSON)
+		if err != nil {
+			fmt.Printf("Could not load configuration. Aborting.")
+			return
+		}
+		if err := LoadConfiguration(context, initialRoutes, Routeexpressions); err != nil {
+			fmt.Printf("Could not load configuration. Aborting.")
+			return
+		}
+
+	} else {
+		initialRoutes, err := context.LoadbalancerConfigurationFromRESTApi()
+		if err != nil {
+			fmt.Printf("Could not load configuration. Aborting.")
+			return
+		}
+
+		if err := LoadConfiguration(context, initialRoutes, Routeexpressions); err != nil {
+			fmt.Printf("Could not load configuration. Aborting.")
+			return
+		}
 	}
 
 	// Start webserver, capture apps and use that.
@@ -593,7 +617,7 @@ func main() {
 
 					// Next, run though apps, and find a exact-match.
 
-					rs, err := FindTargetGroupByRouteExpression(routeexpressions, req)
+					rs, err := FindTargetGroupByRouteExpression(Routeexpressions, req)
 					if err != nil {
 						// Deliver, not found, here is a problem to do sort-of-a-root-accounting.
 						res.WriteHeader(http.StatusNotFound)
