@@ -23,7 +23,7 @@ import (
 )
 
 // Create root-node in graph, and monkey-patch our configuration onto it.
-var Routeexpressions = new(util.List)
+var routeexpressions = new(util.List)
 var timers = new(util.List)
 
 // This is used to output statuscode
@@ -363,7 +363,8 @@ func (l *LoadBalancer) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 		(*(l.Next[candidate])).ServeHTTP(res, req)
 	} else {
 		res.WriteHeader(http.StatusInternalServerError)
-		status := HTTPStatusCode{http.StatusInternalServerError, "No backends available"}
+		status := HTTPStatusCode{http.StatusInternalServerError,
+				fmt.Sprintf("No backends available, %d", l.Count)}
 		tmpl.Execute(res, status)
 		return
 	}
@@ -416,9 +417,9 @@ func EnsureProtocolHeaders(next http.HandlerFunc, Headers []string, Scheme strin
 	}
 }
 
-func FindTargetGroupByRouteExpression(Routeexpressions *util.List, req *http.Request) (*RouteExpression, error) {
+func FindTargetGroupByRouteExpression(routeexpressions *util.List, req *http.Request) (*RouteExpression, error) {
 
-	rs, err := Routeexpressions.Find(func(key *interface{}) bool {
+	rs, err := routeexpressions.Find(func(key *interface{}) bool {
 		RouteExpression := (*key).(RouteExpression)
 		if strings.HasPrefix(fmt.Sprintf("%s://%s%s", req.URL.Scheme,
 			req.Host, req.URL.Path), RouteExpression.Path) {
@@ -512,13 +513,12 @@ func LoadConfiguration(apiConfig *sdk.APIContext, Routes []sdk.Route, rootList *
 						log.Printf("Scheduling refresh, because of api-change. (%d)\n",
 							interceptWriter.HTTPStatus)
 
-						eventConfig := apiConfig.NewEventAPIContext()
-
 						// When dealing with reloads, we use the REST-api
+						eventConfig := apiConfig.NewEventAPIContext()
 						lbConfig := apiConfig.NewLoadbalancerAPIContext()
-						RoutesREST, err := lbConfig.LoadbalancerConfigurationFromRESTApi()
 
 						// if no errors, then reload. If not. Do nothing.
+						RoutesREST, err := lbConfig.LoadbalancerConfigurationFromRESTApi()
 						if err == nil {
 
 							newRootList  := new(util.List)
@@ -538,7 +538,9 @@ func LoadConfiguration(apiConfig *sdk.APIContext, Routes []sdk.Route, rootList *
 							}
 
 							// Flip global Route-expressions. (critical region)
-							Routeexpressions = rootList;
+							routeexpressions = newRootList
+
+							fmt.Printf("Configuration reloaded.\n")
 						}
 					}
 				})
@@ -585,29 +587,26 @@ func main() {
 	fmt.Printf("Listen :%s, scheme: %s, apiConfiguration: %+v \n", *listen, *scheme,context)
 
 	// Create root-node in graph, and monkey-patch our configuration onto it.
-	if *initialJSON  != "unset" {
-		initialRoutes, err := sdk.LoadbalancerConfigurationFromFile(*initialJSON)
+	var initialRoutes []sdk.Route
+	if *initialJSON != "unset" {
+		initialRoutes, err = sdk.LoadbalancerConfigurationFromFile(*initialJSON)
 		if err != nil {
 			fmt.Printf("Could not load configuration. Aborting.")
 			return
 		}
-		if err := LoadConfiguration(context, initialRoutes, Routeexpressions); err != nil {
-			fmt.Printf("Could not load configuration. Aborting.")
-			return
-		}
-
 	} else {
-		initialRoutes, err := context.LoadbalancerConfigurationFromRESTApi()
+		initialRoutes, err = context.LoadbalancerConfigurationFromRESTApi()
 		if err != nil {
-			fmt.Printf("Could not load configuration. Aborting.")
-			return
-		}
-
-		if err := LoadConfiguration(context, initialRoutes, Routeexpressions); err != nil {
 			fmt.Printf("Could not load configuration. Aborting.")
 			return
 		}
 	}
+
+	if err := LoadConfiguration(context, initialRoutes, routeexpressions); err != nil {
+		fmt.Printf("Could not load configuration. Aborting.")
+		return
+	}
+
 
 	// Start webserver, capture apps and use that.
 	http.HandleFunc("/",
@@ -617,7 +616,7 @@ func main() {
 
 					// Next, run though apps, and find a exact-match.
 
-					rs, err := FindTargetGroupByRouteExpression(Routeexpressions, req)
+					rs, err := FindTargetGroupByRouteExpression(routeexpressions, req)
 					if err != nil {
 						// Deliver, not found, here is a problem to do sort-of-a-root-accounting.
 						res.WriteHeader(http.StatusNotFound)
